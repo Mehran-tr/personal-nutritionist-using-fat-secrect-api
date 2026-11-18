@@ -1,0 +1,25 @@
+{
+  "foods_search": {
+    "max_results": "20",
+    "total_results": "1",
+    "page_number": "0",
+    "results": {
+      "food": {
+        "food_id": "777",
+        "food_name": "  Dragon Fruit ",
+        "food_type": "Generic",
+        "servings": {
+          "serving": {
+            "serving_id": "9",
+            "serving_description": "1 fruit",
+            "calories": "60",
+            "carbohydrate": "13",
+            "protein": "1.2",
+            "fat": "",
+            "sodium": "n/a"
+          }
+        }
+      }
+    }
+  }
+}

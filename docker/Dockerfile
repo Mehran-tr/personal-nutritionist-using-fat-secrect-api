@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+# ---------- build: resolve and install dependencies into a venv ----------
+FROM python:3.13-slim AS build
+COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+WORKDIR /app
+
+# Dependencies first: this layer is cached until uv.lock changes.
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
+
+COPY README.md ./
+COPY src ./src
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+# ---------- runtime: slim image, non-root user ----------
+FROM python:3.13-slim AS runtime
+RUN useradd --create-home --uid 10001 app
+WORKDIR /app
+COPY --from=build --chown=app:app /app /app
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+USER app
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/health/live'); sys.exit(0)"
+CMD ["uvicorn", "nutritionist.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--proxy-headers"]

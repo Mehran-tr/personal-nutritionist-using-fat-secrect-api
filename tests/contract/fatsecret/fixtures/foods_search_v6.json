@@ -1,0 +1,61 @@
+{
+  "foods_search": {
+    "max_results": "2",
+    "total_results": "137",
+    "page_number": "0",
+    "results": {
+      "food": [
+        {
+          "food_id": "1641",
+          "food_name": "Chicken Breast",
+          "food_type": "Generic",
+          "food_url": "https://foods.fatsecret.com/calories-nutrition/generic/chicken-breast-ns-as-to-skin-eaten",
+          "servings": {
+            "serving": [
+              {
+                "serving_id": "50321",
+                "serving_description": "100 g",
+                "metric_serving_amount": "100.000",
+                "metric_serving_unit": "g",
+                "number_of_units": "100.000",
+                "measurement_description": "g",
+                "is_default": "1",
+                "calories": "195",
+                "carbohydrate": "0",
+                "protein": "29.55",
+                "fat": "7.72"
+              }
+            ]
+          }
+        },
+        {
+          "food_id": "50953",
+          "food_name": "Whole Grain Cheerios",
+          "brand_name": "General Mills",
+          "food_type": "Brand",
+          "food_url": "https://foods.fatsecret.com/calories-nutrition/general-mills/whole-grain-cheerios",
+          "servings": {
+            "serving": [
+              {
+                "serving_id": "100675",
+                "serving_description": "1 cup",
+                "metric_serving_amount": "28.000",
+                "metric_serving_unit": "g",
+                "number_of_units": "1.000",
+                "measurement_description": "cup",
+                "calories": "100",
+                "carbohydrate": "20.00",
+                "protein": "3.00",
+                "fat": "2.00",
+                "fiber": "3.0",
+                "sugar": "1.00",
+                "added_sugars": "1.00",
+                "sodium": "140"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

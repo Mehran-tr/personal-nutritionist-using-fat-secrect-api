@@ -1,0 +1,61 @@
+{
+  "food": {
+    "food_id": "1641",
+    "food_name": "Chicken Breast",
+    "food_type": "Generic",
+    "food_sub_categories": { "food_sub_category": ["Chicken Breast", "Chicken"] },
+    "food_url": "https://foods.fatsecret.com/calories-nutrition/generic/chicken-breast-ns-as-to-skin-eaten",
+    "food_attributes": {
+      "allergens": { "allergen": [ { "id": "1", "name": "Milk", "value": "0" } ] },
+      "preferences": { "preference": [ { "id": "1", "name": "Vegetarian", "value": "0" } ] }
+    },
+    "food_classification": {
+      "classification": { "level_1": { "id": "1", "name": "Meat" } },
+      "food_form": { "id": "1", "name": "Solid" }
+    },
+    "servings": {
+      "serving": [
+        {
+          "serving_id": "5034",
+          "serving_description": "1/2 small (yield after cooking, bone removed)",
+          "serving_url": "https://foods.fatsecret.com/calories-nutrition/generic/chicken-breast?portionid=5034",
+          "metric_serving_amount": "84.000",
+          "metric_serving_unit": "g",
+          "number_of_units": "0.500",
+          "measurement_description": "small (yield after cooking, bone removed)",
+          "calories": "164",
+          "carbohydrate": "0",
+          "protein": "24.82",
+          "fat": "6.48",
+          "saturated_fat": "1.823",
+          "polyunsaturated_fat": "1.382",
+          "monounsaturated_fat": "2.524",
+          "cholesterol": "70",
+          "sodium": "331",
+          "potassium": "205",
+          "fiber": "0",
+          "sugar": "0"
+        },
+        {
+          "serving_id": "50321",
+          "serving_description": "100 g",
+          "metric_serving_amount": "100.000",
+          "metric_serving_unit": "g",
+          "number_of_units": "100.000",
+          "measurement_description": "g",
+          "is_default": "1",
+          "calories": "195",
+          "carbohydrate": "0",
+          "protein": "29.55",
+          "fat": "7.72",
+          "saturated_fat": "2.170",
+          "cholesterol": "83",
+          "sodium": "394",
+          "potassium": "244",
+          "fiber": "0",
+          "sugar": "0"
+        }
+      ]
+    }
+  }
+}

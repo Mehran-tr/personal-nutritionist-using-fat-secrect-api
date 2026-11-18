@@ -1,4 +1,4 @@
-.PHONY: install run lint fmt typecheck arch test check up down
+.PHONY: install run lint fmt typecheck arch test check up down db migrate revision
 
 install:      ## Install all dependencies (incl. dev)
 	uv sync
@@ -28,3 +28,12 @@ up:
 
 down:
 	docker compose down
+
+db:           ## Start only Postgres + Redis for local development
+	docker compose up -d postgres redis
+
+migrate:      ## Apply all migrations
+	uv run alembic upgrade head
+
+revision:     ## New migration from model changes: make revision m="add diary"
+	uv run alembic revision --autogenerate -m "$(m)"

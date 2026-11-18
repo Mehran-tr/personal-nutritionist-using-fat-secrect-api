@@ -4,20 +4,32 @@ FastAPI backend for a personal-nutritionist app. Food data comes from the
 [fatsecret Platform API](https://platform.fatsecret.com). Users, diaries, targets
 and coaching logic are ours.
 
-> **Status:** step 1 (skeleton) and step 2 (food catalog + fatsecret adapter) are done.
-> Next up: identity & profile → targets → diary → coach.
+> **Status:** steps 1–3 done: skeleton, food catalog + fatsecret adapter,
+> identity (accounts, JWT) and profile on PostgreSQL.
+> Next up: targets → diary → coach.
 
 ## Quick start
 
 ```bash
-cp .env.example .env          # add your fatsecret client id/secret
+cp .env.example .env          # fatsecret keys + AUTH__JWT_SECRET
 make install
+make db                       # Postgres + Redis in Docker
+make migrate                  # alembic upgrade head
 make run                      # http://localhost:8000/docs
-# or, with Redis:
+# or everything in containers (runs migrations first):
 make up
 ```
 
 ```bash
+curl -X POST localhost:8000/api/v1/auth/register -H 'content-type: application/json' \
+     -d '{"email":"me@example.com","password":"correct horse battery"}'
+curl -X POST localhost:8000/api/v1/auth/token -H 'content-type: application/json' \
+     -d '{"email":"me@example.com","password":"correct horse battery"}'   # -> access_token
+curl -X PUT localhost:8000/api/v1/me/profile -H "Authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{"sex":"male","birth_date":"1990-04-01","height_cm":180,"weight_kg":85,
+          "activity_level":"light","goal":"lose_weight","dietary_preferences":["halal"]}'
+
 curl "localhost:8000/api/v1/foods?q=greek%20yogurt&page_size=5"
 curl  localhost:8000/api/v1/foods/1641
 curl  localhost:8000/api/v1/foods/barcode/4006381333931
@@ -33,21 +45,29 @@ A modular monolith. Each feature module is split into ports-and-adapters layers:
 src/nutritionist/
 ├── main.py                 app factory + lifespan
 ├── bootstrap.py            composition root — the ONLY place adapters are chosen
-├── core/                   shared kernel: config, logging, cache port, error base classes
-├── api/                    cross-cutting HTTP: problem+json errors, request-id middleware, health
+├── db_models.py            imports every module's ORM so Alembic sees the full schema
+├── core/                   shared kernel: config, logging, clock, ids, errors,
+│                           cache port, DB base + UnitOfWork, AccessTokenVerifier port
+├── api/                    cross-cutting HTTP: problem+json errors, request-id middleware,
+│                           health, CurrentUserId dependency
 ├── integrations/
 │   └── fatsecret/          vendor client: OAuth2, retries, JSON shape models. No domain knowledge.
 └── modules/
-    └── catalog/
-        ├── domain/         Food, Serving, Nutrients, Gtin, SearchQuery, FoodProvider port, errors
-        ├── application/    use cases: SearchFoods, GetFood, LookupBarcode
-        ├── infrastructure/ FatSecretFoodProvider, mapper (anti-corruption layer), cache decorator
-        └── api/            router, request/response schemas, DI providers
+    ├── catalog/            food search / lookup / barcode (fatsecret behind a port)
+    ├── identity/           register, login (JWT), /me — Argon2id, timing-safe login
+    └── profile/            body metrics, activity, goal, dietary preferences
+                            (each module: domain / application / infrastructure / api)
+migrations/                 Alembic (async), one revision per schema change
 ```
 
-Dependency rule: `api | infrastructure → application → domain`. It is **enforced**
-by `import-linter` (see `[tool.importlinter]` in `pyproject.toml`), so a layer
-violation fails CI.
+Dependency rule: `api | infrastructure → application → domain`, and **modules
+never import each other**; they share only `nutritionist.core` (e.g. `UserId`,
+`AccessTokenVerifier`). Both rules are **enforced** by `import-linter` (see
+`[tool.importlinter]` in `pyproject.toml`), so a violation fails CI.
+
+Transactions belong to use cases, not to HTTP requests: each use case opens a
+module-specific Unit of Work (`async with self.uow() as uow: ... await uow.commit()`),
+and nothing is persisted without an explicit commit.
 
 Request flow for `GET /api/v1/foods/{id}`:
 
@@ -69,11 +89,20 @@ router → GetFood use case → FoodProvider (port)
 | Barcodes validated (GS1 check digit) before any upstream call | A mistyped barcode doesn't cost API quota. |
 | Cache failures degrade, never fail | If Redis goes down the API gets slower, not unavailable. |
 | Errors are RFC 9457 `application/problem+json` | One error shape for clients, with `request_id` for support. |
+| Use-case-owned Unit of Work | Transaction boundaries are business decisions, and they are testable with an in-memory fake. |
+| Argon2id in a worker thread, timing-equalised login | Strong hashing without blocking the event loop. Response times don't reveal which emails are registered. |
+| Short-lived JWT access tokens, verified against an injected clock | Stateless and deterministic to test. Refresh tokens come when a client needs them (see `docs/adr/0003`). |
+| Profiles for adults only (18+) | The energy equations used for targets are validated for adults. |
+| Migrations run as a separate step, never on app start | Multiple replicas can't race on a schema change. |
 
 ### Error mapping
 
 | Situation | HTTP | `type` |
 |---|---|---|
+| Missing/invalid token, bad credentials | 401 (+ `WWW-Authenticate: Bearer`) | `/problems/not_authenticated`, `/problems/invalid_token`, `/problems/invalid_credentials` |
+| Email already registered | 409 | `/problems/email_already_registered` |
+| Profile not created yet | 404 | `/problems/profile_not_found` |
+| Profile out of range (age, height, weight) | 422 | `/problems/invalid_profile` |
 | Unknown food / barcode | 404 | `/problems/food_not_found` |
 | Bad barcode / search input | 422 | `/problems/invalid_barcode`, `/problems/request_validation_error` |
 | fatsecret down, timing out, rate-limiting (after retries) | 503 | `/problems/food_provider_unavailable` |
@@ -83,9 +112,14 @@ router → GetFood use case → FoodProvider (port)
 
 | Suite | What it proves |
 |---|---|
-| `tests/unit` | Domain rules, use cases, cache decorator, token manager, HTTP client behaviour (respx) |
+| `tests/unit` | Domain rules, use cases (in-memory UoW fakes), JWT/Argon2, cache decorator, fatsecret client (respx) |
 | `tests/contract` | Recorded fatsecret payloads map correctly to our domain, including vendor quirks |
-| `tests/e2e` | Full app: routing, middleware, error format, serialization (provider faked at the composition root) |
+| `tests/integration` | Repositories and UoWs on **real PostgreSQL**; migrations match the models (`alembic check`) and downgrade cleanly |
+| `tests/e2e` | Full app on a real DB: account journey, auth errors, problem+json, serialization. Only fatsecret is faked. |
+
+DB tests use `TEST_DATABASE_URL` (default: local `nutritionist_test`). The schema is
+built **by the real migrations**. Locally, DB tests are skipped if Postgres isn't
+running. In CI they are required.
 
 **Upgrading a fatsecret endpoint:** record a real response into
 `tests/contract/fatsecret/fixtures/`, bump the path in `FatSecretSettings`, and

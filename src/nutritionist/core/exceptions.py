@@ -26,6 +26,18 @@ class ValidationError(AppError):
     title = "Invalid input"
 
 
+class ConflictError(AppError):
+    code = "conflict"
+    title = "Conflict"
+
+
+class AuthenticationError(AppError):
+    """The caller is not (or no longer) authenticated."""
+
+    code = "not_authenticated"
+    title = "Authentication required"
+
+
 class ExternalServiceError(AppError):
     """An upstream dependency answered, but with an error we cannot recover from."""
 

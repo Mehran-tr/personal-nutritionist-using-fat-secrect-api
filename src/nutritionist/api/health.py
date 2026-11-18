@@ -23,7 +23,7 @@ async def live() -> HealthOut:
 async def ready(request: Request, response: Response) -> HealthOut:
     """Dependencies are reachable; safe to route traffic here."""
     container: Container = request.app.state.container
-    checks = {"cache": await container.cache.ping()}
+    checks = await container.readiness()
     if all(checks.values()):
         return HealthOut(status="ok", checks=checks)
     response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

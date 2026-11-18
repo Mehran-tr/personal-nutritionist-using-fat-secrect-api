@@ -48,6 +48,26 @@ class CacheSettings(BaseModel):
     search_ttl_seconds: int = Field(default=60 * 60, ge=0)
 
 
+class DatabaseSettings(BaseSettings):
+    """Also loadable on its own (Alembic needs the DB URL, not fatsecret keys)."""
+
+    model_config = SettingsConfigDict(env_prefix="DATABASE__", env_file=".env", extra="ignore")
+
+    url: str = "postgresql+asyncpg://nutritionist:nutritionist@localhost:5432/nutritionist"
+    echo: bool = False
+    pool_size: int = Field(default=10, ge=1)
+    max_overflow: int = Field(default=10, ge=0)
+    pool_timeout_seconds: float = Field(default=10.0, gt=0)
+
+
+class AuthSettings(BaseModel):
+    jwt_secret: SecretStr = Field(min_length=32)
+    jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
+    jwt_issuer: str = "nutritionist"
+    jwt_audience: str = "nutritionist-api"
+    access_token_ttl_minutes: int = Field(default=30, ge=1, le=24 * 60)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -62,6 +82,8 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
 
     fatsecret: FatSecretSettings
+    auth: AuthSettings
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     cache: CacheSettings = CacheSettings()
 
     @property

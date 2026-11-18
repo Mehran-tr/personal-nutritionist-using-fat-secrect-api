@@ -10,6 +10,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from nutritionist.core.exceptions import (
     AppError,
+    AuthenticationError,
+    ConflictError,
     ExternalServiceError,
     ExternalServiceUnavailableError,
     NotFoundError,
@@ -20,7 +22,9 @@ PROBLEM_JSON = "application/problem+json"
 
 # Most specific class first.
 _STATUS_BY_ERROR: tuple[tuple[type[AppError], int], ...] = (
+    (AuthenticationError, 401),
     (NotFoundError, 404),
+    (ConflictError, 409),
     (ValidationError, 422),
     (ExternalServiceUnavailableError, 503),
     (ExternalServiceError, 502),
@@ -44,6 +48,7 @@ def problem(
     title: str,
     detail: str,
     extra: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     body: dict[str, Any] = {
         "type": f"/problems/{code}",
@@ -55,7 +60,7 @@ def problem(
     }
     if extra:
         body.update(extra)
-    return JSONResponse(body, status_code=status, media_type=PROBLEM_JSON)
+    return JSONResponse(body, status_code=status, media_type=PROBLEM_JSON, headers=headers)
 
 
 async def _handle_app_error(request: Request, exc: Exception) -> JSONResponse:
@@ -63,7 +68,10 @@ async def _handle_app_error(request: Request, exc: Exception) -> JSONResponse:
     status = _status_for(exc)
     log = logger.warning if status < 500 else logger.error
     log("app_error", code=exc.code, status=status, detail=exc.detail)
-    return problem(request, status=status, code=exc.code, title=exc.title, detail=exc.detail)
+    headers = {"WWW-Authenticate": "Bearer"} if status == 401 else None
+    return problem(
+        request, status=status, code=exc.code, title=exc.title, detail=exc.detail, headers=headers
+    )
 
 
 async def _handle_request_validation(request: Request, exc: Exception) -> JSONResponse:

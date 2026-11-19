@@ -90,18 +90,27 @@ name = "Every module: api|infrastructure -> application -> domain"
 type = "layers"
 containers = [
     "nutritionist.modules.catalog",
+    "nutritionist.modules.diary",
     "nutritionist.modules.identity",
     "nutritionist.modules.profile",
 ]
 layers = ["api | infrastructure", "application", "domain"]
 
 [[tool.importlinter.contracts]]
+name = "Targets (pure computation, no infrastructure): api -> application -> domain"
+type = "layers"
+containers = ["nutritionist.modules.targets"]
+layers = ["api", "application", "domain"]
+
+[[tool.importlinter.contracts]]
 name = "Modules are independent (they share only nutritionist.core)"
 type = "independence"
 modules = [
     "nutritionist.modules.catalog",
+    "nutritionist.modules.diary",
     "nutritionist.modules.identity",
     "nutritionist.modules.profile",
+    "nutritionist.modules.targets",
 ]
 
 [[tool.importlinter.contracts]]
@@ -114,6 +123,28 @@ source_modules = [
 forbidden_modules = [
     "fastapi", "starlette", "httpx", "redis", "structlog", "sqlalchemy", "jwt", "argon2",
     "nutritionist.integrations", "nutritionist.api", "nutritionist.core.db",
+]
+
+[[tool.importlinter.contracts]]
+name = "Cross-module adapters (interop) are used only by the composition root"
+type = "forbidden"
+source_modules = ["nutritionist.modules", "nutritionist.core", "nutritionist.api"]
+forbidden_modules = ["nutritionist.interop"]
+
+[[tool.importlinter.contracts]]
+name = "Interop talks to modules only through their application/domain layers"
+type = "forbidden"
+source_modules = ["nutritionist.interop"]
+forbidden_modules = [
+    "nutritionist.modules.catalog.infrastructure",
+    "nutritionist.modules.diary.infrastructure",
+    "nutritionist.modules.identity.infrastructure",
+    "nutritionist.modules.profile.infrastructure",
+    "nutritionist.modules.catalog.api",
+    "nutritionist.modules.diary.api",
+    "nutritionist.modules.identity.api",
+    "nutritionist.modules.profile.api",
+    "nutritionist.modules.targets.api",
 ]
 
 [[tool.importlinter.contracts]]

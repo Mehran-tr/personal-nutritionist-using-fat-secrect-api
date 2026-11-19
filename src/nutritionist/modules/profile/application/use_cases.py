@@ -12,6 +12,7 @@ from nutritionist.modules.profile.domain.models import (
     ActivityLevel,
     DietaryPreference,
     Goal,
+    MacroPreference,
     Profile,
     Sex,
 )
@@ -37,6 +38,7 @@ class ProfileData:
     activity_level: ActivityLevel
     goal: Goal
     dietary_preferences: frozenset[DietaryPreference] = frozenset()
+    macro_preference: MacroPreference = MacroPreference.BALANCED
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +56,7 @@ class SaveProfile:
             activity_level=data.activity_level,
             goal=data.goal,
             dietary_preferences=data.dietary_preferences,
+            macro_preference=data.macro_preference,
             today=self.clock.today(),
             now=self.clock.now(),
         )

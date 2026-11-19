@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -82,7 +83,8 @@ async def _handle_request_validation(request: Request, exc: Exception) -> JSONRe
         code="request_validation_error",
         title="Invalid request",
         detail="One or more request parameters are invalid.",
-        extra={"errors": exc.errors()},
+        # jsonable_encoder: error contexts can hold Decimals, dates, etc.
+        extra={"errors": jsonable_encoder(exc.errors())},
     )
 
 

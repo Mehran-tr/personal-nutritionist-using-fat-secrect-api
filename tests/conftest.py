@@ -102,4 +102,4 @@ def migrated_database() -> None:
 @pytest.fixture
 def database(migrated_database: None) -> None:
     """A migrated, empty database for each test."""
-    asyncio.run(_execute("TRUNCATE users, profiles CASCADE"))
+    asyncio.run(_execute("TRUNCATE users CASCADE"))

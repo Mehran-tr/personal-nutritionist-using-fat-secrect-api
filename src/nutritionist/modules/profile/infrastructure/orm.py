@@ -31,3 +31,6 @@ class ProfileRecord(TimestampMixin, Base):
     dietary_preferences: Mapped[list[str]] = mapped_column(
         ARRAY(String(32)), nullable=False, server_default="{}"
     )
+    macro_preference: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="balanced"
+    )

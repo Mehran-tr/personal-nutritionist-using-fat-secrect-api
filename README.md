@@ -4,9 +4,9 @@ FastAPI backend for a personal-nutritionist app. Food data comes from the
 [fatsecret Platform API](https://platform.fatsecret.com). Users, diaries, targets
 and coaching logic are ours.
 
-> **Status:** steps 1–5 done: skeleton, food catalog + fatsecret adapter,
-> identity (accounts, JWT), profile, daily nutrition targets and the food diary.
-> Next up: coach (rule-based insights, then LLM phrasing).
+> **Status:** steps 1–6 done: skeleton, food catalog + fatsecret adapter,
+> identity (accounts, JWT), profile, daily nutrition targets, food diary and coach
+> (rule-based insights + optional, guarded LLM phrasing).
 
 ## Quick start
 
@@ -37,6 +37,7 @@ curl -X POST localhost:8000/api/v1/me/diary/entries -H "Authorization: Bearer $T
      -H 'content-type: application/json' \
      -d '{"day":"2026-11-19","meal":"lunch","food_id":"1641","serving_id":"50321","servings":1.5}'
 curl localhost:8000/api/v1/me/diary/2026-11-19 -H "Authorization: Bearer $TOKEN"
+curl localhost:8000/api/v1/me/coach/2026-11-19 -H "Authorization: Bearer $TOKEN"   # feedback
 
 curl "localhost:8000/api/v1/foods?q=greek%20yogurt&page_size=5"
 curl  localhost:8000/api/v1/foods/1641
@@ -65,10 +66,11 @@ src/nutritionist/
     ├── identity/           register, login (JWT), /me — Argon2id, timing-safe login
     ├── profile/            body metrics, activity, goal, dietary preferences
     ├── targets/            BMR → TDEE → calorie target → macros (pure domain, no DB)
-    └── diary/              food log with nutrient snapshots, per-day frozen targets, summaries
+    ├── diary/              food log with nutrient snapshots, per-day frozen targets, summaries
+    └── coach/              rules engine → ranked insights; optional LLM phrasing (guarded, cached)
                             (each module: domain / application / [infrastructure] / api)
 interop/                    cross-module adapters (profile → targets, catalog → diary,
-                            targets → diary), used only by bootstrap
+                            targets → diary, diary → coach), used only by bootstrap
 migrations/                 Alembic (async), one revision per schema change
 ```
 
@@ -114,6 +116,9 @@ router → GetFood use case → FoodProvider (port)
 | Diary entries snapshot food + per-serving nutrients | History never changes when the food database does, and reading a day needs no API call. See `docs/adr/0005`. |
 | Nutrients are looked up server-side, never sent by the client | A client can't log "0 kcal pizza". The external lookup runs *before* the DB transaction opens. |
 | Day targets frozen at the day's first log | Changing your goal today doesn't rewrite last week. Days with nothing logged show `current` targets. |
+| Coach = deterministic rules first, LLM only rephrases | Insights are testable and explainable. The LLM is off by default and sees only the insights. Output containing a number the rules didn't produce is discarded. See `docs/adr/0006`. |
+| "Under target" rules only judge finished days | At noon you haven't eaten dinner yet. Excess (e.g. sodium) is flagged any time. |
+| Very low intake gets a safety message, never praise | A nutrition app must not reward under-eating. |
 | Other users' entries answer 404, not 403 | IDs never leak whether something exists. |
 | Safety floors and caps, reported as `adjustments` | Users see *why* their number differs from a textbook formula, and nobody gets a crash-diet target. |
 | Migrations run as a separate step, never on app start | Multiple replicas can't race on a schema change. |

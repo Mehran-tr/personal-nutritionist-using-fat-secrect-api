@@ -7,7 +7,7 @@ Nested groups use a double underscore, e.g. ``FATSECRET__CLIENT_ID``.
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,6 +68,24 @@ class AuthSettings(BaseModel):
     access_token_ttl_minutes: int = Field(default=30, ge=1, le=24 * 60)
 
 
+class CoachSettings(BaseModel):
+    """LLM phrasing of coach insights. Off by default: the coach works without it."""
+
+    llm_enabled: bool = False
+    anthropic_api_key: SecretStr | None = None
+    anthropic_base_url: str = "https://api.anthropic.com"
+    model: str = "claude-haiku-5-5"
+    max_tokens: int = Field(default=300, ge=50, le=1000)
+    timeout_seconds: float = Field(default=8.0, gt=0)
+    cache_ttl_seconds: int = Field(default=60 * 60 * 24 * 7, ge=0)
+
+    @model_validator(mode="after")
+    def _key_required_when_enabled(self) -> "CoachSettings":
+        if self.llm_enabled and not self.anthropic_api_key:
+            raise ValueError("COACH__ANTHROPIC_API_KEY is required when COACH__LLM_ENABLED=true")
+        return self
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -85,6 +103,7 @@ class Settings(BaseSettings):
     auth: AuthSettings
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     cache: CacheSettings = CacheSettings()
+    coach: CoachSettings = CoachSettings()
 
     @property
     def docs_enabled(self) -> bool:

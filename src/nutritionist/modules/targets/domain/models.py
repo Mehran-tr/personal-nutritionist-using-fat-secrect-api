@@ -53,6 +53,7 @@ class BodyStats:
     weight_kg: Decimal
     activity_level: ActivityLevel
     goal: Goal
+    preferred_split: MacroSplit = MacroSplit.BALANCED
 
     @property
     def bmi(self) -> Decimal:

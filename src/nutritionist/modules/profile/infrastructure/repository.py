@@ -9,6 +9,7 @@ from nutritionist.modules.profile.domain.models import (
     ActivityLevel,
     DietaryPreference,
     Goal,
+    MacroPreference,
     Profile,
     Sex,
 )
@@ -35,6 +36,7 @@ class SqlAlchemyProfileRepository:
             "activity_level": profile.activity_level.value,
             "goal": profile.goal.value,
             "dietary_preferences": sorted(p.value for p in profile.dietary_preferences),
+            "macro_preference": profile.macro_preference.value,
             "updated_at": profile.updated_at,
         }
         statement = insert(ProfileRecord).values(**values)
@@ -68,5 +70,6 @@ def _to_domain(record: ProfileRecord) -> Profile:
         activity_level=ActivityLevel(record.activity_level),
         goal=Goal(record.goal),
         dietary_preferences=frozenset(DietaryPreference(p) for p in record.dietary_preferences),
+        macro_preference=MacroPreference(record.macro_preference),
         updated_at=record.updated_at,
     )

@@ -9,6 +9,7 @@ from nutritionist.modules.profile.domain.models import (
     ActivityLevel,
     DietaryPreference,
     Goal,
+    MacroPreference,
     Profile,
     Sex,
 )
@@ -24,6 +25,7 @@ class ProfileIn(BaseModel):
     activity_level: ActivityLevel
     goal: Goal
     dietary_preferences: set[DietaryPreference] = Field(default_factory=set)
+    macro_preference: MacroPreference = MacroPreference.BALANCED
 
     def to_command(self) -> ProfileData:
         return ProfileData(
@@ -34,6 +36,7 @@ class ProfileIn(BaseModel):
             activity_level=self.activity_level,
             goal=self.goal,
             dietary_preferences=frozenset(self.dietary_preferences),
+            macro_preference=self.macro_preference,
         )
 
 
@@ -45,6 +48,7 @@ class ProfileOut(BaseModel):
     activity_level: ActivityLevel
     goal: Goal
     dietary_preferences: list[DietaryPreference]
+    macro_preference: MacroPreference
     updated_at: datetime
 
     @classmethod
@@ -57,5 +61,6 @@ class ProfileOut(BaseModel):
             activity_level=profile.activity_level,
             goal=profile.goal,
             dietary_preferences=sorted(profile.dietary_preferences),
+            macro_preference=profile.macro_preference,
             updated_at=profile.updated_at,
         )

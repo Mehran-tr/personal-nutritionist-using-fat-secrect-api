@@ -61,7 +61,13 @@ async def test_profile_adapter_maps_vocabulary_and_age_on_the_given_day() -> Non
 
 
 @pytest.mark.parametrize(
-    "enum_pair", [(profile.Sex, Sex), (profile.ActivityLevel, ActivityLevel), (profile.Goal, Goal)]
+    "enum_pair",
+    [
+        (profile.Sex, Sex),
+        (profile.ActivityLevel, ActivityLevel),
+        (profile.Goal, Goal),
+        (profile.MacroPreference, MacroSplit),
+    ],
 )
 def test_every_profile_value_has_a_targets_counterpart(enum_pair: tuple[type, type]) -> None:
     # Guards the anti-corruption mapping: adding e.g. a new Goal to profile must

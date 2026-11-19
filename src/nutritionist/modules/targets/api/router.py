@@ -61,6 +61,8 @@ def _get_targets(request: Request) -> GetTargets:
 async def get_targets(
     user_id: CurrentUserId,
     use_case: Annotated[GetTargets, Depends(_get_targets)],
-    macro_split: Annotated[MacroSplit, Query()] = MacroSplit.BALANCED,
+    macro_split: Annotated[
+        MacroSplit | None, Query(description="Override the split saved in your profile")
+    ] = None,
 ) -> TargetsOut:
     return TargetsOut.from_domain(await use_case.execute(user_id, macro_split))

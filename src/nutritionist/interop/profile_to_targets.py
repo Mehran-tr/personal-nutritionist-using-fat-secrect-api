@@ -10,7 +10,13 @@ from datetime import date
 from nutritionist.core.ids import UserId
 from nutritionist.modules.profile.application.use_cases import GetProfile
 from nutritionist.modules.profile.domain.errors import ProfileNotFoundError
-from nutritionist.modules.targets.domain.models import ActivityLevel, BodyStats, Goal, Sex
+from nutritionist.modules.targets.domain.models import (
+    ActivityLevel,
+    BodyStats,
+    Goal,
+    MacroSplit,
+    Sex,
+)
 
 
 class ProfileBodyStatsProvider:
@@ -29,4 +35,5 @@ class ProfileBodyStatsProvider:
             weight_kg=profile.weight_kg,
             activity_level=ActivityLevel(profile.activity_level.value),
             goal=Goal(profile.goal.value),
+            preferred_split=MacroSplit(profile.macro_preference.value),
         )

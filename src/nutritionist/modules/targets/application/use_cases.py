@@ -28,9 +28,11 @@ class GetTargets:
     clock: Clock
 
     async def execute(
-        self, user_id: UserId, split: MacroSplit = MacroSplit.BALANCED
+        self, user_id: UserId, split: MacroSplit | None = None, on: date | None = None
     ) -> NutritionTargets:
-        stats = await self.body_stats.for_user(user_id, self.clock.today())
+        """Targets for ``on`` (default: today), with the user's preferred split unless
+        ``split`` overrides it."""
+        stats = await self.body_stats.for_user(user_id, on or self.clock.today())
         if stats is None:
             raise ProfileRequiredError("Create your profile with PUT /me/profile first.")
-        return self.calculator.calculate(stats, split)
+        return self.calculator.calculate(stats, split or stats.preferred_split)

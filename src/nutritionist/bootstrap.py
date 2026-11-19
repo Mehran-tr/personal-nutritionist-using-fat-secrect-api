@@ -13,10 +13,21 @@ from nutritionist.core.config import Settings
 from nutritionist.core.db import create_engine, create_session_factory, ping
 from nutritionist.integrations.fatsecret.auth import ClientCredentialsTokenProvider
 from nutritionist.integrations.fatsecret.client import FatSecretClient
+from nutritionist.interop.catalog_to_diary import CatalogFoodLookup
 from nutritionist.interop.profile_to_targets import ProfileBodyStatsProvider
+from nutritionist.interop.targets_to_diary import TargetsForDiary
+from nutritionist.modules.catalog.application.use_cases import GetFood
 from nutritionist.modules.catalog.domain.ports import FoodProvider
 from nutritionist.modules.catalog.infrastructure.cached_provider import CachedFoodProvider
 from nutritionist.modules.catalog.infrastructure.fatsecret_provider import FatSecretFoodProvider
+from nutritionist.modules.diary.application.use_cases import (
+    DeleteEntry,
+    DiaryUseCases,
+    GetDailySummary,
+    LogFood,
+    UpdateEntry,
+)
+from nutritionist.modules.diary.infrastructure.repository import SqlAlchemyDiaryUnitOfWork
 from nutritionist.modules.identity.application.use_cases import (
     AuthenticateUser,
     GetCurrentUser,
@@ -50,6 +61,7 @@ class Container:
     identity: IdentityUseCases
     profile: ProfileUseCases
     targets: GetTargets
+    diary: DiaryUseCases
 
     async def readiness(self) -> dict[str, bool]:
         return {"database": await ping(self.engine), "cache": await self.cache.ping()}
@@ -88,7 +100,13 @@ def build_food_provider(settings: Settings, http: httpx.AsyncClient, cache: Cach
     )
 
 
-async def build_container(settings: Settings, clock: Clock | None = None) -> Container:
+async def build_container(
+    settings: Settings,
+    clock: Clock | None = None,
+    food_provider: FoodProvider | None = None,
+) -> Container:
+    """Build the object graph. ``clock`` and ``food_provider`` can be overridden
+    (tests replace the external food API, nothing else)."""
     clock = clock or SystemClock()
     http = httpx.AsyncClient(
         timeout=httpx.Timeout(settings.fatsecret.timeout_seconds),
@@ -101,6 +119,7 @@ async def build_container(settings: Settings, clock: Clock | None = None) -> Con
 
     hasher = Argon2PasswordHasher()
     tokens = JwtTokenService(settings.auth, clock)
+    food_provider = food_provider or build_food_provider(settings, http, cache)
 
     def identity_uow() -> SqlAlchemyIdentityUnitOfWork:
         return SqlAlchemyIdentityUnitOfWork(sessions)
@@ -108,10 +127,15 @@ async def build_container(settings: Settings, clock: Clock | None = None) -> Con
     def profile_uow() -> SqlAlchemyProfileUnitOfWork:
         return SqlAlchemyProfileUnitOfWork(sessions)
 
+    def diary_uow() -> SqlAlchemyDiaryUnitOfWork:
+        return SqlAlchemyDiaryUnitOfWork(sessions)
+
     profile = ProfileUseCases(
         save_profile=SaveProfile(profile_uow, clock),
         get_profile=GetProfile(profile_uow),
     )
+    targets = GetTargets(ProfileBodyStatsProvider(profile.get_profile), TargetCalculator(), clock)
+    targets_for_diary = TargetsForDiary(targets)
 
     return Container(
         settings=settings,
@@ -120,14 +144,20 @@ async def build_container(settings: Settings, clock: Clock | None = None) -> Con
         cache=cache,
         engine=engine,
         token_verifier=tokens,
-        food_provider=build_food_provider(settings, http, cache),
+        food_provider=food_provider,
         identity=IdentityUseCases(
             register_user=RegisterUser(identity_uow, hasher, clock),
             authenticate_user=AuthenticateUser(identity_uow, hasher, tokens),
             get_current_user=GetCurrentUser(identity_uow),
         ),
         profile=profile,
-        targets=GetTargets(
-            ProfileBodyStatsProvider(profile.get_profile), TargetCalculator(), clock
+        targets=targets,
+        diary=DiaryUseCases(
+            log_food=LogFood(
+                diary_uow, CatalogFoodLookup(GetFood(food_provider)), targets_for_diary, clock
+            ),
+            update_entry=UpdateEntry(diary_uow),
+            delete_entry=DeleteEntry(diary_uow),
+            get_daily_summary=GetDailySummary(diary_uow, targets_for_diary),
         ),
     )

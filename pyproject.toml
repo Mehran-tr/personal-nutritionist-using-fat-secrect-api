@@ -90,6 +90,7 @@ name = "Every module: api|infrastructure -> application -> domain"
 type = "layers"
 containers = [
     "nutritionist.modules.catalog",
+    "nutritionist.modules.diary",
     "nutritionist.modules.identity",
     "nutritionist.modules.profile",
 ]
@@ -106,6 +107,7 @@ name = "Modules are independent (they share only nutritionist.core)"
 type = "independence"
 modules = [
     "nutritionist.modules.catalog",
+    "nutritionist.modules.diary",
     "nutritionist.modules.identity",
     "nutritionist.modules.profile",
     "nutritionist.modules.targets",
@@ -135,9 +137,11 @@ type = "forbidden"
 source_modules = ["nutritionist.interop"]
 forbidden_modules = [
     "nutritionist.modules.catalog.infrastructure",
+    "nutritionist.modules.diary.infrastructure",
     "nutritionist.modules.identity.infrastructure",
     "nutritionist.modules.profile.infrastructure",
     "nutritionist.modules.catalog.api",
+    "nutritionist.modules.diary.api",
     "nutritionist.modules.identity.api",
     "nutritionist.modules.profile.api",
     "nutritionist.modules.targets.api",

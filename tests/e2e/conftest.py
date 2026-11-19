@@ -20,9 +20,8 @@ def provider() -> FakeFoodProvider:
 @pytest.fixture
 def client(settings: Settings, provider: FakeFoodProvider, database: None) -> Iterator[TestClient]:
     async def factory(s: Settings) -> Container:
-        container = await build_container(s)
-        container.food_provider = provider  # the only fake: no real fatsecret calls
-        return container
+        # The only fake: no real fatsecret calls. Everything else is the real app.
+        return await build_container(s, food_provider=provider)
 
     with TestClient(create_app(settings, container_factory=factory)) as test_client:
         yield test_client

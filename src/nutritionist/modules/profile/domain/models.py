@@ -48,6 +48,14 @@ class DietaryPreference(StrEnum):
     DAIRY_FREE = "dairy_free"
 
 
+class MacroPreference(StrEnum):
+    """How the user likes calories split into macros (interpreted by targets)."""
+
+    BALANCED = "balanced"
+    HIGH_PROTEIN = "high_protein"
+    LOW_CARB = "low_carb"
+
+
 @dataclass(frozen=True, slots=True)
 class Profile:
     user_id: UserId
@@ -58,6 +66,7 @@ class Profile:
     activity_level: ActivityLevel
     goal: Goal
     dietary_preferences: frozenset[DietaryPreference]
+    macro_preference: MacroPreference
     updated_at: datetime
 
     @classmethod
@@ -74,6 +83,7 @@ class Profile:
         dietary_preferences: frozenset[DietaryPreference],
         today: date,
         now: datetime,
+        macro_preference: MacroPreference = MacroPreference.BALANCED,
     ) -> "Profile":
         problems: list[str] = []
 
@@ -103,6 +113,7 @@ class Profile:
             activity_level=activity_level,
             goal=goal,
             dietary_preferences=dietary_preferences,
+            macro_preference=macro_preference,
             updated_at=now,
         )
 

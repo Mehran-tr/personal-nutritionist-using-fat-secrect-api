@@ -4,9 +4,9 @@ FastAPI backend for a personal-nutritionist app. Food data comes from the
 [fatsecret Platform API](https://platform.fatsecret.com). Users, diaries, targets
 and coaching logic are ours.
 
-> **Status:** steps 1–3 done: skeleton, food catalog + fatsecret adapter,
-> identity (accounts, JWT) and profile on PostgreSQL.
-> Next up: targets → diary → coach.
+> **Status:** steps 1–4 done: skeleton, food catalog + fatsecret adapter,
+> identity (accounts, JWT), profile on PostgreSQL, and daily nutrition targets.
+> Next up: diary → coach.
 
 ## Quick start
 
@@ -29,6 +29,8 @@ curl -X PUT localhost:8000/api/v1/me/profile -H "Authorization: Bearer $TOKEN" \
      -H 'content-type: application/json' \
      -d '{"sex":"male","birth_date":"1990-04-01","height_cm":180,"weight_kg":85,
           "activity_level":"light","goal":"lose_weight","dietary_preferences":["halal"]}'
+
+curl "localhost:8000/api/v1/me/targets?macro_split=high_protein" -H "Authorization: Bearer $TOKEN"
 
 curl "localhost:8000/api/v1/foods?q=greek%20yogurt&page_size=5"
 curl  localhost:8000/api/v1/foods/1641
@@ -55,8 +57,10 @@ src/nutritionist/
 └── modules/
     ├── catalog/            food search / lookup / barcode (fatsecret behind a port)
     ├── identity/           register, login (JWT), /me — Argon2id, timing-safe login
-    └── profile/            body metrics, activity, goal, dietary preferences
-                            (each module: domain / application / infrastructure / api)
+    ├── profile/            body metrics, activity, goal, dietary preferences
+    └── targets/            BMR → TDEE → calorie target → macros (pure domain, no DB)
+                            (each module: domain / application / [infrastructure] / api)
+interop/                    cross-module adapters (e.g. profile → targets), used only by bootstrap
 migrations/                 Alembic (async), one revision per schema change
 ```
 
@@ -64,6 +68,11 @@ Dependency rule: `api | infrastructure → application → domain`, and **module
 never import each other**; they share only `nutritionist.core` (e.g. `UserId`,
 `AccessTokenVerifier`). Both rules are **enforced** by `import-linter` (see
 `[tool.importlinter]` in `pyproject.toml`), so a violation fails CI.
+
+When one module needs another's data, it declares a **port in its own
+vocabulary** (e.g. targets' `BodyStatsProvider`). A small adapter in
+`nutritionist/interop/` implements it on top of the other module's public use
+cases. Import-linter makes sure only `bootstrap` uses `interop`.
 
 Transactions belong to use cases, not to HTTP requests: each use case opens a
 module-specific Unit of Work (`async with self.uow() as uow: ... await uow.commit()`),
@@ -93,6 +102,8 @@ router → GetFood use case → FoodProvider (port)
 | Argon2id in a worker thread, timing-equalised login | Strong hashing without blocking the event loop. Response times don't reveal which emails are registered. |
 | Short-lived JWT access tokens, verified against an injected clock | Stateless and deterministic to test. Refresh tokens come when a client needs them (see `docs/adr/0003`). |
 | Profiles for adults only (18+) | The energy equations used for targets are validated for adults. |
+| Targets are computed, not stored | They are a pure function of the profile and today's date, so they can never go stale. Stored when the diary needs history. See `docs/adr/0004`. |
+| Safety floors and caps, reported as `adjustments` | Users see *why* their number differs from a textbook formula, and nobody gets a crash-diet target. |
 | Migrations run as a separate step, never on app start | Multiple replicas can't race on a schema change. |
 
 ### Error mapping
@@ -103,6 +114,7 @@ router → GetFood use case → FoodProvider (port)
 | Email already registered | 409 | `/problems/email_already_registered` |
 | Profile not created yet | 404 | `/problems/profile_not_found` |
 | Profile out of range (age, height, weight) | 422 | `/problems/invalid_profile` |
+| Targets requested before a profile exists | 404 | `/problems/profile_required` |
 | Unknown food / barcode | 404 | `/problems/food_not_found` |
 | Bad barcode / search input | 422 | `/problems/invalid_barcode`, `/problems/request_validation_error` |
 | fatsecret down, timing out, rate-limiting (after retries) | 503 | `/problems/food_provider_unavailable` |
@@ -113,6 +125,7 @@ router → GetFood use case → FoodProvider (port)
 | Suite | What it proves |
 |---|---|
 | `tests/unit` | Domain rules, use cases (in-memory UoW fakes), JWT/Argon2, cache decorator, fatsecret client (respx) |
+| `tests/unit/targets` | Hand-computed reference values, plus invariants checked on a 3,240-case grid over the valid input space (floors, protein cap, macros add up to calories, nothing negative) |
 | `tests/contract` | Recorded fatsecret payloads map correctly to our domain, including vendor quirks |
 | `tests/integration` | Repositories and UoWs on **real PostgreSQL**; migrations match the models (`alembic check`) and downgrade cleanly |
 | `tests/e2e` | Full app on a real DB: account journey, auth errors, problem+json, serialization. Only fatsecret is faked. |

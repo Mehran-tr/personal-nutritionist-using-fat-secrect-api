@@ -13,6 +13,7 @@ from nutritionist.core.config import Settings
 from nutritionist.core.db import create_engine, create_session_factory, ping
 from nutritionist.integrations.fatsecret.auth import ClientCredentialsTokenProvider
 from nutritionist.integrations.fatsecret.client import FatSecretClient
+from nutritionist.interop.profile_to_targets import ProfileBodyStatsProvider
 from nutritionist.modules.catalog.domain.ports import FoodProvider
 from nutritionist.modules.catalog.infrastructure.cached_provider import CachedFoodProvider
 from nutritionist.modules.catalog.infrastructure.fatsecret_provider import FatSecretFoodProvider
@@ -33,6 +34,8 @@ from nutritionist.modules.profile.application.use_cases import (
     SaveProfile,
 )
 from nutritionist.modules.profile.infrastructure.repository import SqlAlchemyProfileUnitOfWork
+from nutritionist.modules.targets.application.use_cases import GetTargets
+from nutritionist.modules.targets.domain.calculator import TargetCalculator
 
 
 @dataclass(slots=True)
@@ -46,6 +49,7 @@ class Container:
     food_provider: FoodProvider
     identity: IdentityUseCases
     profile: ProfileUseCases
+    targets: GetTargets
 
     async def readiness(self) -> dict[str, bool]:
         return {"database": await ping(self.engine), "cache": await self.cache.ping()}
@@ -104,6 +108,11 @@ async def build_container(settings: Settings, clock: Clock | None = None) -> Con
     def profile_uow() -> SqlAlchemyProfileUnitOfWork:
         return SqlAlchemyProfileUnitOfWork(sessions)
 
+    profile = ProfileUseCases(
+        save_profile=SaveProfile(profile_uow, clock),
+        get_profile=GetProfile(profile_uow),
+    )
+
     return Container(
         settings=settings,
         clock=clock,
@@ -117,8 +126,8 @@ async def build_container(settings: Settings, clock: Clock | None = None) -> Con
             authenticate_user=AuthenticateUser(identity_uow, hasher, tokens),
             get_current_user=GetCurrentUser(identity_uow),
         ),
-        profile=ProfileUseCases(
-            save_profile=SaveProfile(profile_uow, clock),
-            get_profile=GetProfile(profile_uow),
+        profile=profile,
+        targets=GetTargets(
+            ProfileBodyStatsProvider(profile.get_profile), TargetCalculator(), clock
         ),
     )

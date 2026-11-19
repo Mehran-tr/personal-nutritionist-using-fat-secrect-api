@@ -18,6 +18,7 @@ from nutritionist.core.logging import configure_logging
 from nutritionist.modules.catalog.api.router import router as catalog_router
 from nutritionist.modules.identity.api.router import router as identity_router
 from nutritionist.modules.profile.api.router import router as profile_router
+from nutritionist.modules.targets.api.router import router as targets_router
 
 
 def create_app(
@@ -49,6 +50,6 @@ def create_app(
     register_error_handlers(app)
 
     app.include_router(health.router)
-    for router in (identity_router, profile_router, catalog_router):
+    for router in (identity_router, profile_router, targets_router, catalog_router):
         app.include_router(router, prefix=settings.api_prefix)
     return app

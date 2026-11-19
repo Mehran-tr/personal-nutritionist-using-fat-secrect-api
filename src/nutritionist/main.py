@@ -16,6 +16,7 @@ from nutritionist.bootstrap import ContainerFactory, build_container
 from nutritionist.core.config import Settings
 from nutritionist.core.logging import configure_logging
 from nutritionist.modules.catalog.api.router import router as catalog_router
+from nutritionist.modules.coach.api.router import router as coach_router
 from nutritionist.modules.diary.api.router import router as diary_router
 from nutritionist.modules.identity.api.router import router as identity_router
 from nutritionist.modules.profile.api.router import router as profile_router
@@ -51,6 +52,13 @@ def create_app(
     register_error_handlers(app)
 
     app.include_router(health.router)
-    for router in (identity_router, profile_router, targets_router, diary_router, catalog_router):
+    for router in (
+        identity_router,
+        profile_router,
+        targets_router,
+        diary_router,
+        coach_router,
+        catalog_router,
+    ):
         app.include_router(router, prefix=settings.api_prefix)
     return app

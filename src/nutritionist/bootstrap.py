@@ -11,15 +11,20 @@ from nutritionist.core.cache import Cache, InMemoryCache, RedisCache
 from nutritionist.core.clock import Clock, SystemClock
 from nutritionist.core.config import Settings
 from nutritionist.core.db import create_engine, create_session_factory, ping
+from nutritionist.integrations.anthropic.client import AnthropicClient
 from nutritionist.integrations.fatsecret.auth import ClientCredentialsTokenProvider
 from nutritionist.integrations.fatsecret.client import FatSecretClient
 from nutritionist.interop.catalog_to_diary import CatalogFoodLookup
+from nutritionist.interop.diary_to_coach import DiaryDaySource
 from nutritionist.interop.profile_to_targets import ProfileBodyStatsProvider
 from nutritionist.interop.targets_to_diary import TargetsForDiary
 from nutritionist.modules.catalog.application.use_cases import GetFood
 from nutritionist.modules.catalog.domain.ports import FoodProvider
 from nutritionist.modules.catalog.infrastructure.cached_provider import CachedFoodProvider
 from nutritionist.modules.catalog.infrastructure.fatsecret_provider import FatSecretFoodProvider
+from nutritionist.modules.coach.application.use_cases import GetDayReview, NoPhraser, Phraser
+from nutritionist.modules.coach.domain.rules import CoachEngine
+from nutritionist.modules.coach.infrastructure.phrasers import CachedPhraser, LlmPhraser
 from nutritionist.modules.diary.application.use_cases import (
     DeleteEntry,
     DiaryUseCases,
@@ -62,6 +67,7 @@ class Container:
     profile: ProfileUseCases
     targets: GetTargets
     diary: DiaryUseCases
+    coach: GetDayReview
 
     async def readiness(self) -> dict[str, bool]:
         return {"database": await ping(self.engine), "cache": await self.cache.ping()}
@@ -97,6 +103,24 @@ def build_food_provider(settings: Settings, http: httpx.AsyncClient, cache: Cach
         namespace=f"fatsecret:{fs.region or 'default'}",
         food_ttl_seconds=settings.cache.food_ttl_seconds,
         search_ttl_seconds=settings.cache.search_ttl_seconds,
+    )
+
+
+def build_phraser(settings: Settings, http: httpx.AsyncClient, cache: Cache) -> Phraser:
+    coach = settings.coach
+    if not coach.llm_enabled or coach.anthropic_api_key is None:
+        return NoPhraser()
+    client = AnthropicClient(
+        http,
+        api_key=coach.anthropic_api_key.get_secret_value(),
+        base_url=coach.anthropic_base_url,
+        timeout_seconds=coach.timeout_seconds,
+    )
+    return CachedPhraser(
+        LlmPhraser(client, model=coach.model, max_tokens=coach.max_tokens),
+        cache,
+        ttl_seconds=coach.cache_ttl_seconds,
+        model=coach.model,
     )
 
 
@@ -136,6 +160,7 @@ async def build_container(
     )
     targets = GetTargets(ProfileBodyStatsProvider(profile.get_profile), TargetCalculator(), clock)
     targets_for_diary = TargetsForDiary(targets)
+    daily_summary = GetDailySummary(diary_uow, targets_for_diary)
 
     return Container(
         settings=settings,
@@ -158,6 +183,12 @@ async def build_container(
             ),
             update_entry=UpdateEntry(diary_uow),
             delete_entry=DeleteEntry(diary_uow),
-            get_daily_summary=GetDailySummary(diary_uow, targets_for_diary),
+            get_daily_summary=daily_summary,
+        ),
+        coach=GetDayReview(
+            DiaryDaySource(daily_summary),
+            CoachEngine(),
+            build_phraser(settings, http, cache),
+            clock,
         ),
     )

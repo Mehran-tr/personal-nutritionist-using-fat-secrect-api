@@ -1,11 +1,13 @@
-from typing import Literal
+from typing import Literal, Protocol
 
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel
 
-from nutritionist.bootstrap import Container
-
 router = APIRouter(prefix="/health", tags=["health"])
+
+
+class SupportsReadiness(Protocol):
+    async def readiness(self) -> dict[str, bool]: ...
 
 
 class HealthOut(BaseModel):
@@ -22,7 +24,7 @@ async def live() -> HealthOut:
 @router.get("/ready", response_model=HealthOut)
 async def ready(request: Request, response: Response) -> HealthOut:
     """Dependencies are reachable; safe to route traffic here."""
-    container: Container = request.app.state.container
+    container: SupportsReadiness = request.app.state.container
     checks = await container.readiness()
     if all(checks.values()):
         return HealthOut(status="ok", checks=checks)

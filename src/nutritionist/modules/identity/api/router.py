@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
 from nutritionist.api.security import CurrentUserId
 from nutritionist.modules.identity.api.deps import (
@@ -34,10 +34,14 @@ async def register(
 
 @router.post("/auth/token", response_model=TokenOut, summary="Exchange credentials for a token")
 async def login(
+    request: Request,
     body: LoginIn,
     use_case: Annotated[AuthenticateUser, Depends(authenticate_user_use_case)],
 ) -> TokenOut:
-    return TokenOut.from_domain(await use_case.execute(body.email, body.password))
+    # Behind a proxy this is the real client IP only if uvicorn trusts the proxy
+    # (--proxy-headers + FORWARDED_ALLOW_IPS); see SECURITY.md.
+    client_ip = request.client.host if request.client else "unknown"
+    return TokenOut.from_domain(await use_case.execute(body.email, body.password, client_ip))
 
 
 @router.get("/me", response_model=UserOut, summary="The authenticated user")

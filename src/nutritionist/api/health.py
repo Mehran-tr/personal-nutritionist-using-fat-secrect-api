@@ -1,7 +1,9 @@
 from typing import Literal, Protocol
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel
+
+from nutritionist.api.hardening import internal_network_only
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -21,7 +23,12 @@ async def live() -> HealthOut:
     return HealthOut(status="ok")
 
 
-@router.get("/ready", response_model=HealthOut)
+@router.get(
+    "/ready",
+    response_model=HealthOut,
+    # Reveals infrastructure state: only for probes/monitoring inside the network.
+    dependencies=[Depends(internal_network_only)],
+)
 async def ready(request: Request, response: Response) -> HealthOut:
     """Dependencies are reachable; safe to route traffic here."""
     container: SupportsReadiness = request.app.state.container

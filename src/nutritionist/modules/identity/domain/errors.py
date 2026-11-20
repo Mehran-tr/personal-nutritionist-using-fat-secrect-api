@@ -1,4 +1,9 @@
-from nutritionist.core.exceptions import AuthenticationError, ConflictError, ValidationError
+from nutritionist.core.exceptions import (
+    AuthenticationError,
+    ConflictError,
+    TooManyRequestsError,
+    ValidationError,
+)
 
 
 class InvalidEmailError(ValidationError):
@@ -30,3 +35,8 @@ class InvalidTokenError(AuthenticationError):
 class AccountUnavailableError(AuthenticationError):
     code = "account_unavailable"
     title = "Account is disabled or no longer exists"
+
+
+class TooManyLoginAttemptsError(TooManyRequestsError):
+    code = "too_many_login_attempts"
+    title = "Too many failed login attempts"

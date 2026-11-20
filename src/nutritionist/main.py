@@ -7,10 +7,16 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from nutritionist import __version__
 from nutritionist.api import health
 from nutritionist.api.errors import register_error_handlers
+from nutritionist.api.hardening import (
+    BodySizeLimitMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from nutritionist.api.middleware import RequestContextMiddleware
 from nutritionist.bootstrap import ContainerFactory, build_container
 from nutritionist.core.config import Settings
@@ -41,6 +47,7 @@ def create_app(
 
     app = FastAPI(
         title="Personal Nutritionist API",
+        debug=False,  # never render tracebacks to clients, in any environment
         version=__version__,
         lifespan=lifespan,
         docs_url="/docs" if settings.docs_enabled else None,
@@ -48,6 +55,14 @@ def create_app(
         openapi_url="/openapi.json" if settings.docs_enabled else None,
     )
 
+    # Starlette runs the LAST added middleware first. Resulting order per request:
+    # request-id/access log -> security headers -> host check -> body size -> throttling.
+    # Headers wrap everything, so 400/413/429 responses get them too.
+    security = settings.security
+    app.add_middleware(RateLimitMiddleware, settings=security, api_prefix=settings.api_prefix)
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=security.max_request_body_bytes)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=security.allowed_hosts)
+    app.add_middleware(SecurityHeadersMiddleware, settings=security)
     app.add_middleware(RequestContextMiddleware)
     register_error_handlers(app)
 

@@ -1,5 +1,12 @@
+x-hardened: &hardened
+  read_only: true                 # immutable container filesystem
+  tmpfs: ["/tmp"]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]               # the app needs no Linux capabilities
+
 services:
   api:
+    <<: *hardened
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -7,8 +14,9 @@ services:
     environment:
       DATABASE__URL: postgresql+asyncpg://nutritionist:nutritionist@postgres:5432/nutritionist
       CACHE__REDIS_URL: redis://redis:6379/0
+    # Local development only. In deployment, only the TLS proxy is published.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -18,6 +26,7 @@ services:
   # Runs once before the API starts. Migrations are never run by the app itself,
   # so several API replicas can never race on a schema change.
   migrate:
+    <<: *hardened
     build:
       context: .
       dockerfile: docker/Dockerfile
@@ -36,7 +45,7 @@ services:
       POSTGRES_PASSWORD: nutritionist
       POSTGRES_DB: nutritionist
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # never expose the database beyond localhost
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -54,5 +63,22 @@ services:
       timeout: 3s
       retries: 5
 
+  # HTTPS termination (TLS 1.2+/1.3 with modern ciphers, automatic certificates).
+  # Start with: DOMAIN=api.example.com docker compose --profile tls up
+  proxy:
+    profiles: ["tls"]
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - api
+
 volumes:
   pgdata:
+  caddy_data:

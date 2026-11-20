@@ -4,7 +4,7 @@ install:      ## Install all dependencies (incl. dev)
 	uv sync
 
 run:          ## Run the API with auto-reload
-	uv run uvicorn nutritionist.main:create_app --factory --reload
+	uv run uvicorn nutritionist.main:create_app --factory --reload --no-server-header
 
 fmt:          ## Format and auto-fix
 	uv run ruff format . && uv run ruff check --fix .

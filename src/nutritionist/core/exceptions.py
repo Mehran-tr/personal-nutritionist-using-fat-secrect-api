@@ -38,6 +38,15 @@ class AuthenticationError(AppError):
     title = "Authentication required"
 
 
+class TooManyRequestsError(AppError):
+    code = "too_many_requests"
+    title = "Too many requests"
+
+    def __init__(self, detail: str | None = None, *, retry_after_seconds: int = 60) -> None:
+        super().__init__(detail)
+        self.retry_after_seconds = max(retry_after_seconds, 1)
+
+
 class ExternalServiceError(AppError):
     """An upstream dependency answered, but with an error we cannot recover from."""
 

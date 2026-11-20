@@ -11,6 +11,12 @@ from nutritionist.core.cache import Cache, InMemoryCache, RedisCache
 from nutritionist.core.clock import Clock, SystemClock
 from nutritionist.core.config import Settings
 from nutritionist.core.db import create_engine, create_session_factory, ping
+from nutritionist.core.rate_limit import RateLimiter
+from nutritionist.core.rate_limit_stores import (
+    FailOpenRateLimiter,
+    InMemoryRateLimiter,
+    RedisRateLimiter,
+)
 from nutritionist.integrations.anthropic.client import AnthropicClient
 from nutritionist.integrations.fatsecret.auth import ClientCredentialsTokenProvider
 from nutritionist.integrations.fatsecret.client import FatSecretClient
@@ -37,6 +43,8 @@ from nutritionist.modules.identity.application.use_cases import (
     AuthenticateUser,
     GetCurrentUser,
     IdentityUseCases,
+    LoginGuard,
+    LoginPolicy,
     RegisterUser,
 )
 from nutritionist.modules.identity.infrastructure.repository import SqlAlchemyIdentityUnitOfWork
@@ -62,12 +70,14 @@ class Container:
     cache: Cache
     engine: AsyncEngine
     token_verifier: AccessTokenVerifier
+    rate_limiter: RateLimiter
     food_provider: FoodProvider
     identity: IdentityUseCases
     profile: ProfileUseCases
     targets: GetTargets
     diary: DiaryUseCases
     coach: GetDayReview
+    _limiter_store: object = None
 
     async def readiness(self) -> dict[str, bool]:
         return {"database": await ping(self.engine), "cache": await self.cache.ping()}
@@ -75,6 +85,9 @@ class Container:
     async def aclose(self) -> None:
         await self.http.aclose()
         await self.cache.aclose()
+        close = getattr(self._limiter_store, "aclose", None)
+        if close is not None:
+            await close()
         await self.engine.dispose()
 
 
@@ -104,6 +117,16 @@ def build_food_provider(settings: Settings, http: httpx.AsyncClient, cache: Cach
         food_ttl_seconds=settings.cache.food_ttl_seconds,
         search_ttl_seconds=settings.cache.search_ttl_seconds,
     )
+
+
+def build_rate_limiter(settings: Settings) -> tuple[RateLimiter, object]:
+    """Returns (fail-open limiter for use, underlying store for shutdown)."""
+    store: RedisRateLimiter | InMemoryRateLimiter
+    if settings.cache.backend == "memory":
+        store = InMemoryRateLimiter()
+    else:
+        store = RedisRateLimiter.from_url(settings.cache.redis_url)
+    return FailOpenRateLimiter(store), store
 
 
 def build_phraser(settings: Settings, http: httpx.AsyncClient, cache: Cache) -> Phraser:
@@ -143,6 +166,17 @@ async def build_container(
 
     hasher = Argon2PasswordHasher()
     tokens = JwtTokenService(settings.auth, clock)
+    rate_limiter, limiter_store = build_rate_limiter(settings)
+    auth = settings.auth
+    login_guard = LoginGuard(
+        rate_limiter,
+        LoginPolicy(
+            max_failures_per_account_and_ip=auth.login_max_failures_per_account_and_ip,
+            lockout_seconds=auth.login_lockout_seconds,
+            max_failures_per_account=auth.login_max_failures_per_account,
+            account_window_seconds=auth.login_account_window_seconds,
+        ),
+    )
     food_provider = food_provider or build_food_provider(settings, http, cache)
 
     def identity_uow() -> SqlAlchemyIdentityUnitOfWork:
@@ -169,10 +203,12 @@ async def build_container(
         cache=cache,
         engine=engine,
         token_verifier=tokens,
+        rate_limiter=rate_limiter,
+        _limiter_store=limiter_store,
         food_provider=food_provider,
         identity=IdentityUseCases(
             register_user=RegisterUser(identity_uow, hasher, clock),
-            authenticate_user=AuthenticateUser(identity_uow, hasher, tokens),
+            authenticate_user=AuthenticateUser(identity_uow, hasher, tokens, login_guard),
             get_current_user=GetCurrentUser(identity_uow),
         ),
         profile=profile,

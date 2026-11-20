@@ -47,6 +47,8 @@ class RequestContextMiddleware:
                 "request",
                 method=scope["method"],
                 path=scope["path"],
+                # For security monitoring (brute force, scraping). Retention per privacy policy.
+                client_ip=scope["client"][0] if scope.get("client") else None,
                 status=status_code,
                 duration_ms=round((time.perf_counter() - started) * 1000, 2),
             )

@@ -21,8 +21,13 @@ FROM python:3.13-slim AS runtime
 RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY --from=build --chown=app:app /app /app
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+    # Trust X-Forwarded-For only from the reverse proxy's network (compose default
+    # bridge). Set to the proxy's address in other environments.
+    FORWARDED_ALLOW_IPS="172.16.0.0/12"
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/health/live'); sys.exit(0)"
-CMD ["uvicorn", "nutritionist.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--proxy-headers"]
+# --no-server-header: don't advertise the server software (fingerprinting).
+CMD ["uvicorn", "nutritionist.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", \
+     "--no-access-log", "--no-server-header", "--proxy-headers"]

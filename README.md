@@ -140,6 +140,15 @@ router → GetFood use case → FoodProvider (port)
 | fatsecret down, timing out, rate-limiting (after retries) | 503 | `/problems/food_provider_unavailable` |
 | fatsecret business/shape error | 502 | `/problems/food_provider_error` |
 
+## Security
+
+Every item of the API security checklist (auth, access control, JWT, OAuth,
+processing, input, output, monitoring) is mapped to code, tests or deployment
+config in **[SECURITY.md](SECURITY.md)**. Highlights: login lockout, per-IP throttling,
+strict security headers + HSTS, 64 KiB body limit, no input echoed in errors, log
+redaction, internal-only readiness probe, and a production config that refuses
+to start unless hardened. TLS: `DOMAIN=api.example.com docker compose --profile tls up`.
+
 ## Testing
 
 | Suite | What it proves |

@@ -16,6 +16,7 @@ from nutritionist.core.exceptions import (
     ExternalServiceError,
     ExternalServiceUnavailableError,
     NotFoundError,
+    TooManyRequestsError,
     ValidationError,
 )
 
@@ -26,6 +27,7 @@ _STATUS_BY_ERROR: tuple[tuple[type[AppError], int], ...] = (
     (AuthenticationError, 401),
     (NotFoundError, 404),
     (ConflictError, 409),
+    (TooManyRequestsError, 429),
     (ValidationError, 422),
     (ExternalServiceUnavailableError, 503),
     (ExternalServiceError, 502),
@@ -69,7 +71,11 @@ async def _handle_app_error(request: Request, exc: Exception) -> JSONResponse:
     status = _status_for(exc)
     log = logger.warning if status < 500 else logger.error
     log("app_error", code=exc.code, status=status, detail=exc.detail)
-    headers = {"WWW-Authenticate": "Bearer"} if status == 401 else None
+    headers: dict[str, str] | None = None
+    if status == 401:
+        headers = {"WWW-Authenticate": "Bearer"}
+    elif isinstance(exc, TooManyRequestsError):
+        headers = {"Retry-After": str(exc.retry_after_seconds)}
     return problem(
         request, status=status, code=exc.code, title=exc.title, detail=exc.detail, headers=headers
     )
@@ -83,9 +89,18 @@ async def _handle_request_validation(request: Request, exc: Exception) -> JSONRe
         code="request_validation_error",
         title="Invalid request",
         detail="One or more request parameters are invalid.",
-        # jsonable_encoder: error contexts can hold Decimals, dates, etc.
-        extra={"errors": jsonable_encoder(exc.errors())},
+        extra={"errors": _safe_errors(exc.errors())},
     )
+
+
+def _safe_errors(errors: Any) -> list[dict[str, Any]]:
+    """Location, message and type only. Pydantic's default output echoes the
+    submitted ``input`` (e.g. a password that was too short) and ``ctx``/``url``
+    internals. Never send user input back or into logs."""
+    return [
+        jsonable_encoder({"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")})
+        for e in errors
+    ]
 
 
 async def _handle_http_exception(request: Request, exc: Exception) -> JSONResponse:

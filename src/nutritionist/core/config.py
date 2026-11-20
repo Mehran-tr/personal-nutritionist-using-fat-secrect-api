@@ -67,6 +67,39 @@ class AuthSettings(BaseModel):
     jwt_audience: str = "nutritionist-api"
     access_token_ttl_minutes: int = Field(default=30, ge=1, le=24 * 60)
 
+    # Login brute-force protection ("max retry + jail").
+    login_max_failures_per_account_and_ip: int = Field(default=5, ge=1)
+    login_lockout_seconds: int = Field(default=15 * 60, ge=1)
+    login_max_failures_per_account: int = Field(default=20, ge=1)  # across all IPs
+    login_account_window_seconds: int = Field(default=60 * 60, ge=1)
+
+    @model_validator(mode="after")
+    def _secret_is_not_trivial(self) -> "AuthSettings":
+        # Length alone accepts "aaaa…": require some variety as well (generate with
+        # `python -c "import secrets; print(secrets.token_urlsafe(48))"`).
+        if len(set(self.jwt_secret.get_secret_value())) < 12:
+            raise ValueError("AUTH__JWT_SECRET is too weak: use a random secret.")
+        return self
+
+
+PRIVATE_NETWORKS = ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128"]
+
+
+class SecuritySettings(BaseModel):
+    # Hosts this API answers for (Host header). "*" only outside production.
+    allowed_hosts: list[str] = ["*"]
+    # HSTS: only meaningful when served over HTTPS (TLS terminates at the proxy).
+    hsts_enabled: bool = False
+    hsts_max_age_seconds: int = Field(default=63_072_000, ge=0)  # 2 years
+    max_request_body_bytes: int = Field(default=64 * 1024, ge=1024)
+
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = Field(default=300, ge=1)  # per client IP, all routes
+    auth_rate_limit_per_minute: int = Field(default=10, ge=1)  # per client IP, /auth/*
+
+    # Networks allowed to call internal endpoints (readiness probe).
+    internal_networks: list[str] = PRIVATE_NETWORKS
+
 
 class CoachSettings(BaseModel):
     """LLM phrasing of coach insights. Off by default: the coach works without it."""
@@ -104,6 +137,26 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     cache: CacheSettings = CacheSettings()
     coach: CoachSettings = CoachSettings()
+    security: SecuritySettings = SecuritySettings()
+
+    @model_validator(mode="after")
+    def _production_is_hardened(self) -> "Settings":
+        if self.environment is not Environment.PRODUCTION:
+            return self
+        problems = []
+        if "*" in self.security.allowed_hosts:
+            problems.append("SECURITY__ALLOWED_HOSTS must list real hostnames")
+        if not self.security.hsts_enabled:
+            problems.append("SECURITY__HSTS_ENABLED must be true")
+        if not self.security.rate_limit_enabled:
+            problems.append("SECURITY__RATE_LIMIT_ENABLED must be true")
+        if self.cache.backend != "redis":
+            problems.append("CACHE__BACKEND must be redis (shared limits across replicas)")
+        if not self.log_json:
+            problems.append("LOG_JSON must be true (centralized logging)")
+        if problems:
+            raise ValueError("Unsafe production configuration: " + "; ".join(problems))
+        return self
 
     @property
     def docs_enabled(self) -> bool:

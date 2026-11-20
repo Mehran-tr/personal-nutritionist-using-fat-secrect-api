@@ -8,6 +8,12 @@ from nutritionist.modules.catalog.domain.errors import FoodProviderUnavailableEr
 from tests.fakes import FakeFoodProvider
 
 
+@pytest.fixture
+def client(authed_client: TestClient) -> TestClient:
+    """Catalog endpoints require a logged-in user (they spend fatsecret quota)."""
+    return authed_client
+
+
 def test_health(client: TestClient) -> None:
     assert client.get("/health/live").json() == {"status": "ok", "checks": {}}
     assert client.get("/health/ready").json() == {

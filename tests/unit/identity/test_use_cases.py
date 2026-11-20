@@ -4,9 +4,11 @@ import pytest
 
 from nutritionist.core.clock import FixedClock
 from nutritionist.core.ids import new_user_id
+from nutritionist.core.rate_limit_stores import InMemoryRateLimiter
 from nutritionist.modules.identity.application.use_cases import (
     AuthenticateUser,
     GetCurrentUser,
+    LoginGuard,
     RegisterUser,
 )
 from nutritionist.modules.identity.domain.errors import (
@@ -20,6 +22,7 @@ from nutritionist.modules.identity.domain.models import Email
 from tests.fakes import NOW, FakePasswordHasher, FakeTokenService, FakeUnitOfWork
 
 PASSWORD = "correct horse battery"
+IP = "203.0.113.9"
 
 
 @pytest.fixture
@@ -77,7 +80,9 @@ class TestAuthenticateUser:
         self, uow: FakeUnitOfWork, hasher: FakePasswordHasher
     ) -> None:
         await _register(uow, hasher)
-        token = await AuthenticateUser(uow, hasher, FakeTokenService()).execute("a@b.de", PASSWORD)
+        token = await AuthenticateUser(
+            uow, hasher, FakeTokenService(), LoginGuard(InMemoryRateLimiter())
+        ).execute("a@b.de", PASSWORD, IP)
         assert token.value.startswith("token-for-")
 
     @pytest.mark.parametrize(
@@ -89,13 +94,17 @@ class TestAuthenticateUser:
     ) -> None:
         await _register(uow, hasher)
         with pytest.raises(InvalidCredentialsError):
-            await AuthenticateUser(uow, hasher, FakeTokenService()).execute(email, password)
+            await AuthenticateUser(
+                uow, hasher, FakeTokenService(), LoginGuard(InMemoryRateLimiter())
+            ).execute(email, password, IP)
 
     async def test_unknown_email_still_spends_a_hash_verification(
         self, uow: FakeUnitOfWork, hasher: FakePasswordHasher
     ) -> None:
         with pytest.raises(InvalidCredentialsError):
-            await AuthenticateUser(uow, hasher, FakeTokenService()).execute("x@b.de", PASSWORD)
+            await AuthenticateUser(
+                uow, hasher, FakeTokenService(), LoginGuard(InMemoryRateLimiter())
+            ).execute("x@b.de", PASSWORD, IP)
         assert hasher.verify_calls == 1
 
     async def test_inactive_account_is_refused(
@@ -106,15 +115,20 @@ class TestAuthenticateUser:
         uow.users.users[user.id] = replace(user, is_active=False)
 
         with pytest.raises(AccountUnavailableError):
-            await AuthenticateUser(uow, hasher, FakeTokenService()).execute("a@b.de", PASSWORD)
+            await AuthenticateUser(
+                uow, hasher, FakeTokenService(), LoginGuard(InMemoryRateLimiter())
+            ).execute("a@b.de", PASSWORD, IP)
 
     async def test_outdated_hash_is_upgraded_on_login(self, uow: FakeUnitOfWork) -> None:
         await _register(uow, FakePasswordHasher())
         commits_before = uow.commits
 
         await AuthenticateUser(
-            uow, FakePasswordHasher(needs_rehash=True), FakeTokenService()
-        ).execute("a@b.de", PASSWORD)
+            uow,
+            FakePasswordHasher(needs_rehash=True),
+            FakeTokenService(),
+            LoginGuard(InMemoryRateLimiter()),
+        ).execute("a@b.de", PASSWORD, IP)
 
         assert uow.commits == commits_before + 1
 

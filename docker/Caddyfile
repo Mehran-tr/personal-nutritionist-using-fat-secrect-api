@@ -1,0 +1,16 @@
+# TLS termination in front of the API.
+# Caddy obtains and renews certificates automatically, redirects HTTP -> HTTPS,
+# and uses TLS 1.2/1.3 with modern AEAD cipher suites only by default.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The app sends HSTS itself (SECURITY__HSTS_ENABLED=true). Strip the
+	# proxy's own fingerprint.
+	header -Server
+
+	# Don't let clients reach internal endpoints through the public entrypoint.
+	@internal path /health/ready /docs* /openapi.json
+	respond @internal 404
+
+	reverse_proxy api:8000
+}

@@ -23,5 +23,17 @@ def client(settings: Settings, provider: FakeFoodProvider, database: None) -> It
         # The only fake: no real fatsecret calls. Everything else is the real app.
         return await build_container(s, food_provider=provider)
 
-    with TestClient(create_app(settings, container_factory=factory)) as test_client:
+    # A private client address, as the app sees callers behind the internal proxy.
+    app = create_app(settings, container_factory=factory)
+    with TestClient(app, client=("10.0.0.7", 50000)) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def authed_client(client: TestClient) -> TestClient:
+    """The same client, logged in as a fresh user."""
+    creds = {"email": "authed@example.com", "password": "correct horse battery"}
+    assert client.post("/api/v1/auth/register", json=creds).status_code == 201
+    token = client.post("/api/v1/auth/token", json=creds).json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {token}"
+    return client

@@ -39,6 +39,8 @@ jobs:
           enable-cache: true
       - run: uv python install 3.13
       - run: uv sync --frozen
+      - name: Known-vulnerability audit of locked dependencies
+        run: uv export --frozen --no-hashes --format requirements-txt > /tmp/req.txt && uvx pip-audit -r /tmp/req.txt
       - name: Lint
         run: uv run ruff check . && uv run ruff format --check .
       - name: Type check

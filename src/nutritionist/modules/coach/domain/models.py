@@ -91,3 +91,4 @@ class DayReview:
     status: DayStatus
     insights: tuple[Insight, ...]
     summary: str | None = None  # natural-language version, only if an LLM is enabled
+    summary_pending: bool = False  # being generated in the background: ask again shortly

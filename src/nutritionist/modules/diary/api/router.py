@@ -5,10 +5,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from nutritionist.api.security import CurrentUserId
+from nutritionist.core.exceptions import ValidationError
 from nutritionist.modules.diary.api.schemas import (
     DaySummaryOut,
     EntryOut,
     LogFoodIn,
+    LogMealIn,
     UpdateEntryIn,
 )
 from nutritionist.modules.diary.application.use_cases import DiaryUseCases
@@ -32,6 +34,24 @@ Diary = Annotated[DiaryUseCases, Depends(_diary)]
 )
 async def log_food(user_id: CurrentUserId, body: LogFoodIn, diary: Diary) -> EntryOut:
     return EntryOut.from_domain(await diary.log_food.execute(user_id, body.to_command()))
+
+
+@router.post(
+    "/entries/batch",
+    response_model=list[EntryOut],
+    status_code=status.HTTP_201_CREATED,
+    summary="Log a whole meal at once (one round trip, all-or-nothing)",
+)
+async def log_meal(
+    request: Request, user_id: CurrentUserId, body: LogMealIn, diary: Diary
+) -> list[EntryOut]:
+    limit: int = request.app.state.container.settings.performance.max_batch_items
+    if len(body.items) > limit:
+        raise ValidationError(f"A meal can contain at most {limit} items per request.")
+    entries = await diary.log_food.execute_many(
+        user_id, body.day, body.meal, [item.to_item() for item in body.items]
+    )
+    return [EntryOut.from_domain(e) for e in entries]
 
 
 @router.patch("/entries/{entry_id}", response_model=EntryOut, summary="Change servings or meal")

@@ -15,8 +15,12 @@ services:
       DATABASE__URL: postgresql+asyncpg://nutritionist:nutritionist@postgres:5432/nutritionist
       CACHE__REDIS_URL: redis://redis:6379/0
     # Local development only. In deployment, only the TLS proxy is published.
+    # A port range so `docker compose up --scale api=3` works (8000, 8001, ...).
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8000-8009:8000"
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -40,6 +44,17 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    # Slow-query log + pg_stat_statements for profiling (see PERFORMANCE.md).
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - log_min_duration_statement=250
+      - -c
+      - max_connections=200
     environment:
       POSTGRES_USER: nutritionist
       POSTGRES_PASSWORD: nutritionist
@@ -48,6 +63,7 @@ services:
       - "127.0.0.1:5432:5432"   # never expose the database beyond localhost
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-extensions.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nutritionist"]
       interval: 5s
@@ -78,6 +94,23 @@ services:
       - caddy_data:/data
     depends_on:
       - api
+
+  # Metrics: `docker compose --profile observability up` -> Prometheus on :9090,
+  # Grafana on :3000 (add Prometheus at http://prometheus:9090 as data source).
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.0.0
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.3.0
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [prometheus]
 
 volumes:
   pgdata:

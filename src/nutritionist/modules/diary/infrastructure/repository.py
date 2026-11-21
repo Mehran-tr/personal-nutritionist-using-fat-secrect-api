@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +49,14 @@ class SqlAlchemyDiaryEntryRepository:
             .order_by(DiaryEntryRecord.logged_at)
         )
         return [_to_domain(r) for r in records]
+
+    async def count_for_day(self, user_id: UserId, day: date) -> int:
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(DiaryEntryRecord)
+            .where(DiaryEntryRecord.user_id == user_id, DiaryEntryRecord.day == day)
+        )
+        return int(count or 0)
 
 
 class SqlAlchemyDayTargetsRepository:

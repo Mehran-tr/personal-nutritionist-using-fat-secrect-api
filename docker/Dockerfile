@@ -29,5 +29,9 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/health/live'); sys.exit(0)"
 # --no-server-header: don't advertise the server software (fingerprinting).
+# One worker per container; scale with replicas (simple metrics, clean shutdowns).
+# Keep-alive (75 s) outlives the proxy's idle upstream connections, so the proxy
+# never reuses a socket the app just closed (avoids sporadic 502s).
 CMD ["uvicorn", "nutritionist.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", \
-     "--no-access-log", "--no-server-header", "--proxy-headers"]
+     "--no-access-log", "--no-server-header", "--proxy-headers", "--timeout-keep-alive", "75", \
+     "--timeout-graceful-shutdown", "20"]

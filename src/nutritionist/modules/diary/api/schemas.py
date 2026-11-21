@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, PlainSerializer, model_validator
 
-from nutritionist.modules.diary.application.use_cases import LogFoodCommand
+from nutritionist.modules.diary.application.use_cases import LogFoodCommand, MealItem
 from nutritionist.modules.diary.domain.models import (
     MAX_SERVINGS,
     DailySummary,
@@ -39,6 +39,27 @@ class LogFoodIn(BaseModel):
 
     def to_command(self) -> LogFoodCommand:
         return LogFoodCommand(self.day, self.meal, self.food_id, self.serving_id, self.servings)
+
+
+FoodId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+
+
+class MealItemIn(BaseModel):
+    food_id: FoodId
+    serving_id: FoodId
+    servings: Servings = Decimal(1)
+
+    def to_item(self) -> MealItem:
+        return MealItem(self.food_id, self.serving_id, self.servings)
+
+
+class LogMealIn(BaseModel):
+    """Several foods eaten together: one request, one transaction, all-or-nothing."""
+
+    day: date
+    meal: MealType
+    # Upper bound also enforced by settings.performance.max_batch_items.
+    items: list[MealItemIn] = Field(min_length=1, max_length=100)
 
 
 class UpdateEntryIn(BaseModel):

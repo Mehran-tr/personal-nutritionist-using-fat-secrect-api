@@ -4,6 +4,7 @@ Responsibilities: auth headers, common params, retries, error envelopes and
 response-shape validation. It knows nothing about our domain.
 """
 
+import time
 from typing import Any
 
 import httpx
@@ -18,6 +19,7 @@ from tenacity import (
 )
 
 from nutritionist.core.config import FatSecretSettings
+from nutritionist.core.metrics import UPSTREAM_LATENCY
 from nutritionist.integrations.fatsecret.auth import TokenProvider
 from nutritionist.integrations.fatsecret.errors import (
     INVALID_TOKEN,
@@ -110,14 +112,20 @@ class FatSecretClient:
 
     async def _attempt(self, url: str, query: dict[str, Any]) -> dict[str, Any]:
         token = await self._tokens.get_token()
+        started = time.perf_counter()
         try:
             response = await self._http.get(
                 url, params=query, headers={"Authorization": f"Bearer {token}"}
             )
         except httpx.TimeoutException as exc:
+            UPSTREAM_LATENCY.labels("fatsecret", "timeout").observe(time.perf_counter() - started)
             raise _RetryableError("timeout") from exc
         except httpx.TransportError as exc:
+            UPSTREAM_LATENCY.labels("fatsecret", "error").observe(time.perf_counter() - started)
             raise _RetryableError("transport") from exc
+        UPSTREAM_LATENCY.labels("fatsecret", str(response.status_code)).observe(
+            time.perf_counter() - started
+        )
 
         if response.status_code == 429 or response.status_code >= 500:
             raise _RetryableError(f"http {response.status_code}")

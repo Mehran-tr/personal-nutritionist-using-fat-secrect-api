@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: nutritionist-api
+    # Docker DNS returns every replica of the "api" service.
+    dns_sd_configs:
+      - names: ["api"]
+        type: A
+        port: 8000
+    metrics_path: /metrics

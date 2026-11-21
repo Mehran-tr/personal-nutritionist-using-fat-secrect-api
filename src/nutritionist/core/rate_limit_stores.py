@@ -7,6 +7,7 @@ from collections.abc import Callable
 import structlog
 from redis.asyncio import Redis
 
+from nutritionist.core.cache import redis_client
 from nutritionist.core.rate_limit import RateLimiter, WindowState
 
 logger = structlog.get_logger(__name__)
@@ -18,8 +19,8 @@ class RedisRateLimiter:
         self._prefix = prefix
 
     @classmethod
-    def from_url(cls, url: str) -> "RedisRateLimiter":
-        return cls(Redis.from_url(url))
+    def from_url(cls, url: str, socket_timeout: float = 0.5) -> "RedisRateLimiter":
+        return cls(redis_client(url, socket_timeout))
 
     async def hit(self, key: str, window_seconds: int) -> WindowState:
         full = f"{self._prefix}:{key}"

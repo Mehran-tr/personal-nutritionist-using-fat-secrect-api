@@ -10,9 +10,11 @@ from nutritionist.modules.diary.application.use_cases import (
     GetDailySummary,
     LogFood,
     LogFoodCommand,
+    MealItem,
     UpdateEntry,
 )
 from nutritionist.modules.diary.domain.errors import (
+    DayFullError,
     DiaryEntryNotFoundError,
     FoodOrServingNotFoundError,
 )
@@ -105,3 +107,42 @@ class TestDailySummary:
         assert summary.entries == ()
         assert uow.day_targets.rows == {}
         assert uow.commits == 0
+
+
+class CountingTargets(FakeTargets):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    async def for_day(self, user_id, day):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        return await super().for_day(user_id, day)
+
+
+class TestPerformanceBehaviour:
+    async def test_targets_are_computed_once_per_day_not_per_log(self) -> None:
+        uow, targets = FakeDiaryUow(), CountingTargets()
+        log = LogFood(uow, FakeFoods(OATS), targets, FixedClock(NOW))
+        for _ in range(5):
+            await log.execute(USER, command())
+        assert targets.calls == 1
+
+    async def test_meal_batch_is_all_or_nothing(self) -> None:
+        uow = FakeDiaryUow()
+        log = LogFood(uow, FakeFoods(OATS), FakeTargets(), FixedClock(NOW))
+        items = [MealItem("10", "s40", Decimal(1)), MealItem("missing", "s40", Decimal(1))]
+
+        with pytest.raises(FoodOrServingNotFoundError):
+            await log.execute_many(USER, TODAY, MealType.LUNCH, items)
+        assert uow.entries.rows == {}
+
+        ok = await log.execute_many(USER, TODAY, MealType.LUNCH, [items[0]] * 3)
+        assert len(ok) == 3
+        assert uow.commits == 1  # one transaction for the whole meal
+
+    async def test_day_capacity(self) -> None:
+        uow = FakeDiaryUow()
+        log = LogFood(uow, FakeFoods(OATS), FakeTargets(), FixedClock(NOW), max_entries_per_day=2)
+        await log.execute_many(USER, TODAY, MealType.LUNCH, [MealItem("10", "s40", Decimal(1))] * 2)
+        with pytest.raises(DayFullError):
+            await log.execute(USER, command())

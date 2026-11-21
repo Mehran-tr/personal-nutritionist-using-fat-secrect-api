@@ -5,7 +5,11 @@ from decimal import Decimal
 from nutritionist.core.clock import FixedClock
 from nutritionist.core.ids import UserId, new_user_id
 from nutritionist.interop.diary_to_coach import DiaryDaySource
-from nutritionist.modules.coach.application.use_cases import GetDayReview, NoPhraser
+from nutritionist.modules.coach.application.use_cases import (
+    GetDayReview,
+    NoPhraser,
+    PhraseResult,
+)
 from nutritionist.modules.coach.domain.models import CoachDay, DayStatus, Insight, InsightCode
 from nutritionist.modules.coach.domain.rules import CoachEngine
 from nutritionist.modules.diary.application.use_cases import (
@@ -58,9 +62,9 @@ class Spy:
     def __init__(self) -> None:
         self.seen: tuple[Insight, ...] | None = None
 
-    async def phrase(self, day: CoachDay, insights: tuple[Insight, ...]) -> str | None:
+    async def phrase(self, day: CoachDay, insights: tuple[Insight, ...]) -> PhraseResult:
         self.seen = insights
-        return "Friendly summary."
+        return PhraseResult("Friendly summary.")
 
 
 async def test_review_combines_engine_and_phraser() -> None:

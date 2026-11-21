@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from nutritionist.api.security import CurrentUserId
 from nutritionist.modules.catalog.api.deps import (
@@ -16,16 +16,23 @@ from nutritionist.modules.catalog.domain.models import MAX_PAGE_SIZE
 # fatsecret quota, so anonymous callers must not be able to drive it.
 router = APIRouter(prefix="/foods", tags=["catalog"])
 
+# Food data is the same for every user and changes rarely, so the *client* may
+# reuse it. "private": never stored by shared caches/CDNs (requests are authenticated).
+FOOD_CACHE_CONTROL = "private, max-age=3600"
+SEARCH_CACHE_CONTROL = "private, max-age=300"
+
 
 @router.get("", response_model=FoodPageOut, summary="Search the food database")
 async def search_foods(
     _user: CurrentUserId,
+    response: Response,
     use_case: Annotated[SearchFoods, Depends(search_foods_use_case)],
     q: Annotated[str, Query(min_length=2, max_length=100, description="Search text")],
     page: Annotated[int, Query(ge=0, description="Zero-based page")] = 0,
     page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
 ) -> FoodPageOut:
     result = await use_case.execute(q, page=page, page_size=page_size)
+    response.headers["Cache-Control"] = SEARCH_CACHE_CONTROL
     return FoodPageOut.from_domain(result)
 
 
@@ -34,16 +41,22 @@ async def search_foods(
 )
 async def lookup_barcode(
     _user: CurrentUserId,
+    response: Response,
     use_case: Annotated[LookupBarcode, Depends(lookup_barcode_use_case)],
     barcode: Annotated[str, Path(min_length=8, max_length=14)],
 ) -> FoodOut:
-    return FoodOut.from_domain(await use_case.execute(barcode))
+    food = await use_case.execute(barcode)
+    response.headers["Cache-Control"] = FOOD_CACHE_CONTROL
+    return FoodOut.from_domain(food)
 
 
 @router.get("/{food_id}", response_model=FoodOut, summary="Get a food with all its servings")
 async def get_food(
     _user: CurrentUserId,
+    response: Response,
     use_case: Annotated[GetFood, Depends(get_food_use_case)],
     food_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,40}$")],
 ) -> FoodOut:
-    return FoodOut.from_domain(await use_case.execute(food_id))
+    food = await use_case.execute(food_id)
+    response.headers["Cache-Control"] = FOOD_CACHE_CONTROL
+    return FoodOut.from_domain(food)

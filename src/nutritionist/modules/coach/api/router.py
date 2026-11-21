@@ -44,7 +44,11 @@ class DayReviewOut(BaseModel):
     insights: list[InsightOut] = Field(description="Most important first.")
     summary: str | None = Field(
         description="Friendly paragraph written by an LLM from the insights. "
-        "null when LLM phrasing is disabled or unavailable."
+        "null when LLM phrasing is disabled, unavailable or still pending."
+    )
+    summary_pending: bool = Field(
+        description="True while the summary is generated in the background. "
+        "Request the review again in a few seconds to get it."
     )
 
     @classmethod
@@ -54,6 +58,7 @@ class DayReviewOut(BaseModel):
             status=r.status,
             insights=[InsightOut.from_domain(i) for i in r.insights],
             summary=r.summary,
+            summary_pending=r.summary_pending,
         )
 
 

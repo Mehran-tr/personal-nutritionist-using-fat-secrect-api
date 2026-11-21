@@ -15,3 +15,8 @@ class DiaryEntryNotFoundError(NotFoundError):
 class FoodOrServingNotFoundError(NotFoundError):
     code = "food_or_serving_not_found"
     title = "Food or serving not found"
+
+
+class DayFullError(InvalidDiaryEntryError):
+    code = "diary_day_full"
+    title = "Too many entries for one day"

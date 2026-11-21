@@ -1,11 +1,13 @@
 """SQLAlchemy plumbing shared by every module's infrastructure layer."""
 
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from types import TracebackType
 from typing import Self
 
-from sqlalchemy import DateTime, MetaData, func, text
+import structlog
+from sqlalchemy import DateTime, MetaData, event, func, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,6 +17,9 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from nutritionist.core.config import DatabaseSettings
+from nutritionist.core.metrics import DB_QUERY_LATENCY, DB_SLOW_QUERIES
+
+logger = structlog.get_logger(__name__)
 
 # Deterministic constraint names: stable Alembic diffs and catchable IntegrityErrors.
 NAMING_CONVENTION = {
@@ -40,14 +45,57 @@ class TimestampMixin:
 
 
 def create_engine(settings: DatabaseSettings) -> AsyncEngine:
-    return create_async_engine(
+    """Pooled async engine with timeouts at every level.
+
+    Pool sizing: (replicas x workers x (pool_size + max_overflow)) must stay below
+    Postgres ``max_connections`` (minus admin headroom), or put PgBouncer in front.
+    """
+    engine = create_async_engine(
         settings.url,
         echo=settings.echo,
         pool_size=settings.pool_size,
         max_overflow=settings.max_overflow,
-        pool_timeout=settings.pool_timeout_seconds,
+        pool_timeout=settings.pool_timeout_seconds,  # wait for a free connection
+        pool_recycle=settings.pool_recycle_seconds,
         pool_pre_ping=True,
+        connect_args={
+            "timeout": settings.connect_timeout_seconds,  # TCP/handshake
+            "command_timeout": settings.statement_timeout_ms / 1000 + 1,  # client side
+            "server_settings": {
+                "statement_timeout": str(settings.statement_timeout_ms),
+                "idle_in_transaction_session_timeout": str(settings.idle_in_transaction_timeout_ms),
+                "application_name": "nutritionist",
+            },
+        },
     )
+    install_query_timing(engine, settings.slow_query_ms)
+    return engine
+
+
+def install_query_timing(engine: AsyncEngine, slow_query_ms: int) -> None:
+    """Every statement feeds a latency histogram; slow ones are also logged.
+    The SQL text is logged, never the bound parameters (they can be personal data).
+
+    Caveat: with asyncio this measures wall time around an ``await``, so it also
+    includes event-loop lag. If PK lookups show up as "slow", the loop was
+    starved (CPU-bound work on the loop or too many CPU threads), not the database.
+    Postgres' own ``log_min_duration_statement`` shows the server-side truth.
+    """
+    sync_engine = engine.sync_engine
+
+    @event.listens_for(sync_engine, "before_cursor_execute")
+    def _start(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        conn.info.setdefault("query_start", []).append(time.perf_counter())
+
+    @event.listens_for(sync_engine, "after_cursor_execute")
+    def _stop(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        elapsed = time.perf_counter() - conn.info["query_start"].pop()
+        DB_QUERY_LATENCY.observe(elapsed)
+        if elapsed * 1000 >= slow_query_ms:
+            DB_SLOW_QUERIES.inc()
+            logger.warning(
+                "slow_query", duration_ms=round(elapsed * 1000, 1), statement=statement[:500]
+            )
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

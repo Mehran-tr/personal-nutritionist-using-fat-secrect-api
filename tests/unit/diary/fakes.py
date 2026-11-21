@@ -44,6 +44,9 @@ class FakeEntries:
     async def list_for_day(self, user_id: UserId, day: date) -> list[DiaryEntry]:
         return [e for e in self.rows.values() if e.user_id == user_id and e.day == day]
 
+    async def count_for_day(self, user_id: UserId, day: date) -> int:
+        return len(await self.list_for_day(user_id, day))
+
 
 class FakeDayTargets:
     def __init__(self) -> None:

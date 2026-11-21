@@ -191,3 +191,8 @@ def test_ids_in_urls_are_uuids_and_never_user_ids(client: TestClient) -> None:
     assert not any("{user_id}" in path for path in spec["paths"])
     entry_param = spec["paths"]["/api/v1/me/diary/entries/{entry_id}"]["patch"]["parameters"][0]
     assert entry_param["schema"]["format"] == "uuid"
+
+
+def test_metrics_are_not_public(settings: Settings, database: None) -> None:
+    with app_client(settings, ip="203.0.113.50") as public:
+        assert public.get("/metrics").status_code == 404

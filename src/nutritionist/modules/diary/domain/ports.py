@@ -16,6 +16,8 @@ class DiaryEntryRepository(Protocol):
 
     async def list_for_day(self, user_id: UserId, day: date) -> list[DiaryEntry]: ...
 
+    async def count_for_day(self, user_id: UserId, day: date) -> int: ...
+
 
 class DayTargetsRepository(Protocol):
     """The targets that applied on a day, frozen when the day's first entry is logged."""

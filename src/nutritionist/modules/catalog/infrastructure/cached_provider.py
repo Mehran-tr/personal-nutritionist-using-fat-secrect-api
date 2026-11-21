@@ -1,12 +1,15 @@
-"""Read-through cache decorator for any ``FoodProvider``."""
+"""Read-through cache decorator for any ``FoodProvider``, with request coalescing."""
 
+import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import structlog
 from pydantic import TypeAdapter
 
 from nutritionist.core.cache import Cache
+from nutritionist.core.metrics import CACHE_REQUESTS
 from nutritionist.modules.catalog.domain.models import Food, Gtin, Page, SearchQuery
 from nutritionist.modules.catalog.domain.ports import FoodProvider
 
@@ -34,6 +37,9 @@ class CachedFoodProvider:
         self._prefix = f"catalog:{_SCHEMA_VERSION}:{namespace}"
         self._food_ttl = food_ttl_seconds
         self._search_ttl = search_ttl_seconds
+        # Single-flight: concurrent misses for the same key share one upstream call
+        # (e.g. 50 users logging the same popular food the moment its entry expires).
+        self._in_flight: dict[str, asyncio.Task[Any]] = {}
 
     async def search(self, query: SearchQuery) -> Page[Food]:
         digest = hashlib.sha256(query.text.lower().encode()).hexdigest()[:24]
@@ -63,8 +69,28 @@ class CachedFoodProvider:
     ) -> T:
         cached = await self._safe_get(key)
         if cached is not None:
+            CACHE_REQUESTS.labels("food", "hit").inc()
             return adapter.validate_json(cached)
 
+        task = self._in_flight.get(key)
+        if task is None:
+            CACHE_REQUESTS.labels("food", "miss").inc()
+            task = asyncio.create_task(self._load_and_store(key, adapter, load, ttl))
+            self._in_flight[key] = task
+            task.add_done_callback(lambda _: self._in_flight.pop(key, None))
+        else:
+            CACHE_REQUESTS.labels("food", "coalesced").inc()
+        # shield: one caller disconnecting must not cancel the load for the others.
+        result: T = await asyncio.shield(task)
+        return result
+
+    async def _load_and_store[T](
+        self,
+        key: str,
+        adapter: TypeAdapter[T],
+        load: Callable[[], Awaitable[T]],
+        ttl: int,
+    ) -> T:
         value = await load()
         await self._safe_set(key, adapter.dump_json(value), ttl)
         return value

@@ -6,6 +6,16 @@ from typing import Protocol
 from redis.asyncio import Redis
 
 
+def redis_client(url: str, socket_timeout: float = 0.5) -> Redis:
+    """Redis is an accelerator here: fail fast instead of making requests wait."""
+    return Redis.from_url(
+        url,
+        socket_timeout=socket_timeout,
+        socket_connect_timeout=socket_timeout,
+        health_check_interval=30,
+    )
+
+
 class Cache(Protocol):
     async def get(self, key: str) -> bytes | None: ...
 
@@ -21,8 +31,8 @@ class RedisCache:
         self._client = client
 
     @classmethod
-    def from_url(cls, url: str) -> "RedisCache":
-        return cls(Redis.from_url(url))
+    def from_url(cls, url: str, socket_timeout: float = 0.5) -> "RedisCache":
+        return cls(redis_client(url, socket_timeout))
 
     async def get(self, key: str) -> bytes | None:
         value = await self._client.get(key)

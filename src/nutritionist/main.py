@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from nutritionist import __version__
@@ -18,6 +19,7 @@ from nutritionist.api.hardening import (
     SecurityHeadersMiddleware,
 )
 from nutritionist.api.middleware import RequestContextMiddleware
+from nutritionist.api.performance import ETagMiddleware, MetricsMiddleware, metrics_router
 from nutritionist.bootstrap import ContainerFactory, build_container
 from nutritionist.core.config import Settings
 from nutritionist.core.logging import configure_logging
@@ -40,6 +42,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         container = await container_factory(settings)
         app.state.container = container
+        await container.warm_up()
         try:
             yield
         finally:
@@ -56,17 +59,25 @@ def create_app(
     )
 
     # Starlette runs the LAST added middleware first. Resulting order per request:
-    # request-id/access log -> security headers -> host check -> body size -> throttling.
-    # Headers wrap everything, so 400/413/429 responses get them too.
-    security = settings.security
+    # request-id/access log -> security headers -> gzip -> host check -> body size
+    # -> throttling -> metrics -> etag -> app.
+    # Security headers wrap everything (so 400/413/429 get them). ETag hashes the
+    # *uncompressed* body, and gzip compresses the final one.
+    security, perf = settings.security, settings.performance
+    if perf.etag_enabled:
+        app.add_middleware(ETagMiddleware)
+    app.add_middleware(MetricsMiddleware)
     app.add_middleware(RateLimitMiddleware, settings=security, api_prefix=settings.api_prefix)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=security.max_request_body_bytes)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=security.allowed_hosts)
+    if perf.gzip_enabled:
+        app.add_middleware(GZipMiddleware, minimum_size=perf.gzip_min_bytes, compresslevel=6)
     app.add_middleware(SecurityHeadersMiddleware, settings=security)
     app.add_middleware(RequestContextMiddleware)
     register_error_handlers(app)
 
     app.include_router(health.router)
+    app.include_router(metrics_router)
     for router in (
         identity_router,
         profile_router,

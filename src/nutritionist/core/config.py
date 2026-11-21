@@ -35,7 +35,9 @@ class FatSecretSettings(BaseModel):
     region: str | None = None
     language: str | None = None
 
-    timeout_seconds: float = Field(default=10.0, gt=0)
+    # Per attempt. Worst case per call ~ attempts x timeout, so keep both small.
+    timeout_seconds: float = Field(default=5.0, gt=0)
+    connect_timeout_seconds: float = Field(default=2.0, gt=0)
     max_attempts: int = Field(default=3, ge=1, le=10)
     retry_backoff_seconds: float = Field(default=0.2, ge=0)
     token_refresh_margin_seconds: int = Field(default=60, ge=0)
@@ -44,6 +46,8 @@ class FatSecretSettings(BaseModel):
 class CacheSettings(BaseModel):
     backend: Literal["redis", "memory"] = "redis"
     redis_url: str = "redis://localhost:6379/0"
+    # Redis is a cache: if it's slow, give up fast and fall back.
+    redis_socket_timeout_seconds: float = Field(default=0.5, gt=0)
     food_ttl_seconds: int = Field(default=60 * 60 * 24, ge=0)
     search_ttl_seconds: int = Field(default=60 * 60, ge=0)
 
@@ -58,6 +62,14 @@ class DatabaseSettings(BaseSettings):
     pool_size: int = Field(default=10, ge=1)
     max_overflow: int = Field(default=10, ge=0)
     pool_timeout_seconds: float = Field(default=10.0, gt=0)
+    # Recycle before typical proxy/firewall idle cut-offs (e.g. 30-60 min).
+    pool_recycle_seconds: int = Field(default=1800, ge=60)
+    connect_timeout_seconds: float = Field(default=5.0, gt=0)
+    # Server-side guard rails: a runaway query or a forgotten transaction can't
+    # hold locks and connections forever.
+    statement_timeout_ms: int = Field(default=5000, ge=100)
+    idle_in_transaction_timeout_ms: int = Field(default=10_000, ge=1000)
+    slow_query_ms: int = Field(default=200, ge=1)
 
 
 class AuthSettings(BaseModel):
@@ -66,6 +78,11 @@ class AuthSettings(BaseModel):
     jwt_issuer: str = "nutritionist"
     jwt_audience: str = "nutritionist-api"
     access_token_ttl_minutes: int = Field(default=30, ge=1, le=24 * 60)
+
+    # Threads for password hashing; 0 = auto (CPU count - 1, at least 1). Argon2
+    # is deliberately CPU-heavy. Unbounded, a login burst takes every core and
+    # starves the event loop, so *all* other requests stall too.
+    hashing_threads: int = Field(default=0, ge=0, le=64)
 
     # Login brute-force protection ("max retry + jail").
     login_max_failures_per_account_and_ip: int = Field(default=5, ge=1)
@@ -119,6 +136,15 @@ class CoachSettings(BaseModel):
         return self
 
 
+class PerformanceSettings(BaseModel):
+    gzip_enabled: bool = True
+    gzip_min_bytes: int = Field(default=1024, ge=0)  # tiny bodies aren't worth it
+    etag_enabled: bool = True
+    background_concurrency: int = Field(default=4, ge=1)  # e.g. parallel LLM phrasings
+    max_entries_per_day: int = Field(default=200, ge=1)
+    max_batch_items: int = Field(default=20, ge=1, le=100)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -138,6 +164,7 @@ class Settings(BaseSettings):
     cache: CacheSettings = CacheSettings()
     coach: CoachSettings = CoachSettings()
     security: SecuritySettings = SecuritySettings()
+    performance: PerformanceSettings = PerformanceSettings()
 
     @model_validator(mode="after")
     def _production_is_hardened(self) -> "Settings":

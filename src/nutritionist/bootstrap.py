@@ -1,12 +1,15 @@
 """Composition root: the only place that knows which adapter implements which port."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
+import structlog
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from nutritionist.core.auth import AccessTokenVerifier
+from nutritionist.core.background import BackgroundRunner
 from nutritionist.core.cache import Cache, InMemoryCache, RedisCache
 from nutritionist.core.clock import Clock, SystemClock
 from nutritionist.core.config import Settings
@@ -77,12 +80,28 @@ class Container:
     targets: GetTargets
     diary: DiaryUseCases
     coach: GetDayReview
+    background: BackgroundRunner = field(default_factory=BackgroundRunner)
+    # Best-effort tasks run at startup (open DB pool, fetch upstream tokens...).
+    warmups: list[Callable[[], Awaitable[object]]] = field(default_factory=list)
     _limiter_store: object = None
 
     async def readiness(self) -> dict[str, bool]:
         return {"database": await ping(self.engine), "cache": await self.cache.ping()}
 
+    async def warm_up(self, timeout_seconds: float = 3.0) -> None:
+        """Pay first-request costs (TCP/TLS handshakes, DB connection, OAuth token)
+        before traffic arrives. Never fails startup: a cold path is still correct."""
+        log = structlog.get_logger(__name__)
+        for task in self.warmups:
+            try:
+                await asyncio.wait_for(task(), timeout_seconds)
+            except Exception as exc:
+                log.warning(
+                    "warm_up_skipped", task=getattr(task, "__name__", "?"), error=type(exc).__name__
+                )
+
     async def aclose(self) -> None:
+        await self.background.aclose()
         await self.http.aclose()
         await self.cache.aclose()
         close = getattr(self._limiter_store, "aclose", None)
@@ -97,10 +116,17 @@ ContainerFactory = Callable[[Settings], Awaitable[Container]]
 def build_cache(settings: Settings) -> Cache:
     if settings.cache.backend == "memory":
         return InMemoryCache()
-    return RedisCache.from_url(settings.cache.redis_url)
+    return RedisCache.from_url(
+        settings.cache.redis_url, settings.cache.redis_socket_timeout_seconds
+    )
 
 
-def build_food_provider(settings: Settings, http: httpx.AsyncClient, cache: Cache) -> FoodProvider:
+def build_food_provider(
+    settings: Settings,
+    http: httpx.AsyncClient,
+    cache: Cache,
+    warmups: list[Callable[[], Awaitable[object]]] | None = None,
+) -> FoodProvider:
     fs = settings.fatsecret
     tokens = ClientCredentialsTokenProvider(
         http,
@@ -110,6 +136,8 @@ def build_food_provider(settings: Settings, http: httpx.AsyncClient, cache: Cach
         scopes=fs.scopes,
         refresh_margin_seconds=fs.token_refresh_margin_seconds,
     )
+    if warmups is not None:
+        warmups.append(tokens.get_token)
     return CachedFoodProvider(
         FatSecretFoodProvider(FatSecretClient(http, tokens, fs)),
         cache,
@@ -125,11 +153,18 @@ def build_rate_limiter(settings: Settings) -> tuple[RateLimiter, object]:
     if settings.cache.backend == "memory":
         store = InMemoryRateLimiter()
     else:
-        store = RedisRateLimiter.from_url(settings.cache.redis_url)
+        store = RedisRateLimiter.from_url(
+            settings.cache.redis_url, settings.cache.redis_socket_timeout_seconds
+        )
     return FailOpenRateLimiter(store), store
 
 
-def build_phraser(settings: Settings, http: httpx.AsyncClient, cache: Cache) -> Phraser:
+def build_phraser(
+    settings: Settings,
+    http: httpx.AsyncClient,
+    cache: Cache,
+    runner: BackgroundRunner | None = None,
+) -> Phraser:
     coach = settings.coach
     if not coach.llm_enabled or coach.anthropic_api_key is None:
         return NoPhraser()
@@ -144,6 +179,7 @@ def build_phraser(settings: Settings, http: httpx.AsyncClient, cache: Cache) -> 
         cache,
         ttl_seconds=coach.cache_ttl_seconds,
         model=coach.model,
+        runner=runner,
     )
 
 
@@ -156,7 +192,10 @@ async def build_container(
     (tests replace the external food API, nothing else)."""
     clock = clock or SystemClock()
     http = httpx.AsyncClient(
-        timeout=httpx.Timeout(settings.fatsecret.timeout_seconds),
+        # One shared client: connection pooling + HTTP keep-alive to upstreams.
+        timeout=httpx.Timeout(
+            settings.fatsecret.timeout_seconds, connect=settings.fatsecret.connect_timeout_seconds
+        ),
         limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
         headers={"User-Agent": f"{settings.app_name}/0.1"},
     )
@@ -164,7 +203,7 @@ async def build_container(
     engine = create_engine(settings.database)
     sessions = create_session_factory(engine)
 
-    hasher = Argon2PasswordHasher()
+    hasher = Argon2PasswordHasher(threads=settings.auth.hashing_threads)
     tokens = JwtTokenService(settings.auth, clock)
     rate_limiter, limiter_store = build_rate_limiter(settings)
     auth = settings.auth
@@ -177,7 +216,9 @@ async def build_container(
             account_window_seconds=auth.login_account_window_seconds,
         ),
     )
-    food_provider = food_provider or build_food_provider(settings, http, cache)
+    warmups: list[Callable[[], Awaitable[object]]] = [lambda: ping(engine), cache.ping]
+    food_provider = food_provider or build_food_provider(settings, http, cache, warmups)
+    background = BackgroundRunner(settings.performance.background_concurrency)
 
     def identity_uow() -> SqlAlchemyIdentityUnitOfWork:
         return SqlAlchemyIdentityUnitOfWork(sessions)
@@ -215,7 +256,11 @@ async def build_container(
         targets=targets,
         diary=DiaryUseCases(
             log_food=LogFood(
-                diary_uow, CatalogFoodLookup(GetFood(food_provider)), targets_for_diary, clock
+                diary_uow,
+                CatalogFoodLookup(GetFood(food_provider)),
+                targets_for_diary,
+                clock,
+                max_entries_per_day=settings.performance.max_entries_per_day,
             ),
             update_entry=UpdateEntry(diary_uow),
             delete_entry=DeleteEntry(diary_uow),
@@ -224,7 +269,9 @@ async def build_container(
         coach=GetDayReview(
             DiaryDaySource(daily_summary),
             CoachEngine(),
-            build_phraser(settings, http, cache),
+            build_phraser(settings, http, cache, background),
             clock,
         ),
+        background=background,
+        warmups=warmups,
     )

@@ -1,4 +1,4 @@
-.PHONY: install run lint fmt typecheck arch test check up down db migrate revision
+.PHONY: install run lint fmt typecheck arch test check up down db migrate revision loadtest audit
 
 install:      ## Install all dependencies (incl. dev)
 	uv sync
@@ -37,3 +37,9 @@ migrate:      ## Apply all migrations
 
 revision:     ## New migration from model changes: make revision m="add diary"
 	uv run alembic revision --autogenerate -m "$(m)"
+
+loadtest:     ## Load test with a fake fatsecret: make loadtest users=50 seconds=60
+	perf/run_loadtest.sh "run-$$(date +%H%M%S)" $${users:-50} $${seconds:-60}
+
+audit:        ## Check locked dependencies for known vulnerabilities
+	uv export --frozen --no-hashes --format requirements-txt > /tmp/req.txt && uvx pip-audit -r /tmp/req.txt

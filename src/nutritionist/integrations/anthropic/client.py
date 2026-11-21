@@ -4,10 +4,13 @@ Deliberately tiny: one call, typed errors, no retries. Callers that use it for
 optional features fall back instead of retrying and making the user wait.
 """
 
+import time
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, ValidationError
+
+from nutritionist.core.metrics import UPSTREAM_LATENCY
 
 API_VERSION = "2023-06-01"
 
@@ -55,12 +58,17 @@ class AnthropicClient:
             "anthropic-version": API_VERSION,
             "content-type": "application/json",
         }
+        started = time.perf_counter()
         try:
             response = await self._http.post(
                 self._url, json=body, headers=headers, timeout=self._timeout
             )
         except httpx.HTTPError as exc:
+            UPSTREAM_LATENCY.labels("anthropic", "error").observe(time.perf_counter() - started)
             raise AnthropicError("Anthropic API unreachable.") from exc
+        UPSTREAM_LATENCY.labels("anthropic", str(response.status_code)).observe(
+            time.perf_counter() - started
+        )
         if response.status_code != 200:
             raise AnthropicError(f"Anthropic API returned {response.status_code}.")
 

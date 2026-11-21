@@ -38,6 +38,10 @@ curl -X POST localhost:8000/api/v1/me/diary/entries -H "Authorization: Bearer $T
      -d '{"day":"2026-11-19","meal":"lunch","food_id":"1641","serving_id":"50321","servings":1.5}'
 curl localhost:8000/api/v1/me/diary/2026-11-19 -H "Authorization: Bearer $TOKEN"
 curl localhost:8000/api/v1/me/coach/2026-11-19 -H "Authorization: Bearer $TOKEN"   # feedback
+# a whole meal in one request
+curl -X POST localhost:8000/api/v1/me/diary/entries/batch -H "Authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' -d '{"day":"2026-11-19","meal":"breakfast",
+     "items":[{"food_id":"1641","serving_id":"50321","servings":1},{"food_id":"50953","serving_id":"100675"}]}'
 
 curl "localhost:8000/api/v1/foods?q=greek%20yogurt&page_size=5"
 curl  localhost:8000/api/v1/foods/1641
@@ -148,6 +152,16 @@ config in **[SECURITY.md](SECURITY.md)**. Highlights: login lockout, per-IP thro
 strict security headers + HSTS, 64 KiB body limit, no input echoed in errors, log
 redaction, internal-only readiness probe, and a production config that refuses
 to start unless hardened. TLS: `DOMAIN=api.example.com docker compose --profile tls up`.
+
+## Performance
+
+Every item of the API performance checklist is mapped in **[PERFORMANCE.md](PERFORMANCE.md)**,
+with load-test results: p95 **48 ms** in steady state, about **250 req/s per worker** at 200
+concurrent users. Highlights: bounded Argon2 pool (fixed event-loop starvation:
+p95 600 → 64 ms under login bursts), gzip + ETag/304, single-flight cache misses,
+batch meal logging, background LLM phrasing, DB/Redis/upstream timeouts,
+Prometheus `/metrics`, async logging, and Caddy load balancing across replicas.
+Run `make loadtest`.
 
 ## Testing
 

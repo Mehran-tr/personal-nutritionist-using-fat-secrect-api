@@ -12,12 +12,15 @@ import hashlib
 import json
 import re
 from decimal import Decimal
+from typing import Protocol
 
 import structlog
 
+from nutritionist.core.background import BackgroundRunner
 from nutritionist.core.cache import Cache
+from nutritionist.core.metrics import CACHE_REQUESTS
 from nutritionist.integrations.anthropic.client import AnthropicClient, AnthropicError
-from nutritionist.modules.coach.application.use_cases import Phraser
+from nutritionist.modules.coach.application.use_cases import PhraseResult
 from nutritionist.modules.coach.domain.models import CoachDay, Insight
 
 logger = structlog.get_logger(__name__)
@@ -81,17 +84,35 @@ def _normalise(number: str) -> str:
     return str(value.normalize()) if value % 1 else str(int(value))
 
 
+class TextGenerator(Protocol):
+    async def phrase(self, day: CoachDay, insights: tuple[Insight, ...]) -> str | None: ...
+
+
 class CachedPhraser:
     """Same insights, same text: completed days are reviewed again and again, and
-    each phrasing costs an API call. Failures (``None``) are not cached."""
+    each phrasing costs an API call (~1-3 s). Failures are not cached.
 
-    def __init__(self, inner: Phraser, cache: Cache, *, ttl_seconds: int, model: str) -> None:
+    With a ``runner``, a cache miss never makes the user wait. Generation starts
+    in the background (deduplicated per key) and the response says
+    ``pending``. The next request is a cache hit. Without one, it runs inline.
+    """
+
+    def __init__(
+        self,
+        inner: TextGenerator,
+        cache: Cache,
+        *,
+        ttl_seconds: int,
+        model: str,
+        runner: BackgroundRunner | None = None,
+    ) -> None:
         self._inner = inner
         self._cache = cache
         self._ttl = ttl_seconds
         self._model = model
+        self._runner = runner
 
-    async def phrase(self, day: CoachDay, insights: tuple[Insight, ...]) -> str | None:
+    async def phrase(self, day: CoachDay, insights: tuple[Insight, ...]) -> PhraseResult:
         fingerprint = json.dumps(
             [PROMPT_VERSION, self._model, day.status.value, [i.message for i in insights]]
         )
@@ -101,8 +122,16 @@ class CachedPhraser:
         except Exception:
             cached = None
         if cached is not None:
-            return cached.decode()
+            CACHE_REQUESTS.labels("coach_phrase", "hit").inc()
+            return PhraseResult(cached.decode())
+        CACHE_REQUESTS.labels("coach_phrase", "miss").inc()
 
+        if self._runner is not None:
+            self._runner.spawn(key, "coach_phrase", lambda: self._fill(key, day, insights))
+            return PhraseResult(pending=True)
+        return PhraseResult(await self._fill(key, day, insights))
+
+    async def _fill(self, key: str, day: CoachDay, insights: tuple[Insight, ...]) -> str | None:
         text = await self._inner.phrase(day, insights)
         if text is not None:
             try:

@@ -1,7 +1,10 @@
 """Password hashing (Argon2id) and access tokens (JWT)."""
 
 import asyncio
+import os
 import uuid
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import jwt
@@ -15,21 +18,42 @@ from nutritionist.modules.identity.domain.errors import InvalidTokenError
 from nutritionist.modules.identity.domain.models import AccessToken
 
 
-class Argon2PasswordHasher:
-    """Argon2id with library defaults (OWASP-compliant). Hashing runs in a worker
-    thread: ~50 ms of CPU per call would otherwise stall every other request."""
+def default_hashing_threads() -> int:
+    return max(1, (os.cpu_count() or 2) - 1)
 
-    def __init__(self, hasher: _Argon2 | None = None) -> None:
+
+class Argon2PasswordHasher:
+    """Argon2id with library defaults (OWASP-compliant).
+
+    Hashing runs on a *dedicated, bounded* thread pool. Running it on the event
+    loop would block it outright. On the default executor (cpu_count + 4 threads)
+    a login burst saturates every core and starves the event loop, which made
+    unrelated requests take seconds in load tests (see PERFORMANCE.md). With
+    cpu_count - 1 threads, at least one core is always left for the event loop.
+    Excess logins queue, which is fine: hashing is the bottleneck anyway, and the
+    per-IP auth rate limit keeps the queue short.
+    """
+
+    def __init__(self, hasher: _Argon2 | None = None, threads: int = 0) -> None:
         self._hasher = hasher or _Argon2()
+        self._pool = ThreadPoolExecutor(
+            max_workers=threads or default_hashing_threads(), thread_name_prefix="argon2"
+        )
+
+    async def _run[T](self, fn: Callable[..., T], *args: str) -> T:
+        return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
 
     async def hash(self, password: str) -> str:
-        return await asyncio.to_thread(self._hasher.hash, password)
+        return await self._run(self._hasher.hash, password)
 
     async def verify(self, password_hash: str, password: str) -> bool:
         try:
-            return await asyncio.to_thread(self._hasher.verify, password_hash, password)
+            return await self._run(self._hasher.verify, password_hash, password)
         except (VerifyMismatchError, VerificationError, InvalidHashError):
             return False
+
+    def close(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
 
     def needs_rehash(self, password_hash: str) -> bool:
         return self._hasher.check_needs_rehash(password_hash)
